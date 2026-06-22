@@ -1,1 +1,1 @@
-web: gunicorn app:server
+web: gunicorn est_res_pru_5:server
