@@ -1,0 +1,6 @@
+flask
+dash
+pandas
+plotly
+openpyxl
+gunicorn
