@@ -9,7 +9,9 @@ import plotly.graph_objs as go
 print("Iniciando servidor Dash para el dashboard web")
 
 # ==================== CONFIGURACIÓN DEL LOGO ====================
-PATH_DEL_LOGO = r"G:\.shortcut-targets-by-id\1O42JJ1RYQb6m-tNq3bxzW8jZQY7iGTAV\LIDERZA 2025\JUAN PORTILLO\REDES SOCIALES\LOGO LIDERZA.png"
+# Se ajustó la ruta para que busque el logo en la misma carpeta del script (ideal para producción)
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+PATH_DEL_LOGO = os.path.join(BASE_DIR, "logo.png")
 
 def encode_image(path):
     try:
