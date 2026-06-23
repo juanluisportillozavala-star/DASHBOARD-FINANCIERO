@@ -8,11 +8,10 @@ from dash.dash_table.Format import Format, Scheme, Group, Symbol
 import plotly.graph_objs as go
 
 print("Iniciando servidor Dash para el dashboard web")
+
 # ==================== CONFIGURACIÓN DEL LOGO ====================
-# FALTA ESTA LÍNEA: Define la ubicación del proyecto
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-# ==================== CONFIGURACIÓN DEL LOGO ====================
-PATH_DEL_LOGO = os.path.join(BASE_DIR,"logo.png")
+PATH_DEL_LOGO = os.path.join(BASE_DIR, "logo.png")
 
 def encode_image(path):
     try:
@@ -22,6 +21,20 @@ def encode_image(path):
         return ""
 
 logo_base64 = encode_image(PATH_DEL_LOGO)
+
+# ==================== DICCIONARIO DE MESES (SOLUCIÓN ORDEN) ====================
+MESES_ORDEN = {
+    'ENERO': 1, 'FEBRERO': 2, 'MARZO': 3, 'ABRIL': 4, 
+    'MAYO': 5, 'JUNIO': 6, 'JULIO': 7, 'AGOSTO': 8, 
+    'SEPTIEMBRE': 9, 'OCTUBRE': 10, 'NOVIEMBRE': 11, 'DICIEMBRE': 12
+}
+
+def obtener_clave_orden(mes_str):
+    partes = str(mes_str).split()
+    if len(partes) == 2:
+        mes, año = partes
+        return (int(año), MESES_ORDEN.get(mes.upper(), 0))
+    return (0, 0)
 
 
 # ---------------------- LÓGICA DE PROCESAMIENTO ----------------------
@@ -231,7 +244,37 @@ app.layout = html.Div([
 
     # CONTENEDORES DE REPORTES Y GRÁFICOS
     html.Div([
-        html.Div(id='table-container', style={'width': '100%', 'marginBottom': '25px', 'background': '#FFFFFF', 'borderRadius': '12px', 'padding': '15px', 'boxShadow': '0 1px 3px rgba(0,0,0,0.05)'}),
+        html.Div(
+            style={'width': '100%', 'marginBottom': '25px', 'background': '#FFFFFF', 'borderRadius': '12px', 'padding': '15px', 'boxShadow': '0 1px 3px rgba(0,0,0,0.05)'},
+            children=[
+                # Se define la tabla vacía aquí para que Python controle el ordenamiento ("custom")
+                dash_table.DataTable(
+                    id='main-table',
+                    page_size=50,
+                    fixed_columns={'headers': True, 'data': 1},
+                    style_table={'width':'100%', 'minWidth':'100%', 'overflowX':'auto'},
+                    style_cell={
+                        'textAlign':'right', 'padding':'12px 15px', 'minWidth':'140px', 
+                        'width':'140px', 'maxWidth':'140px', 'fontFamily': 'Segoe UI, sans-serif', 
+                        'color': '#334155', 'border': '1px solid #E2E8F0', 'backgroundColor': '#FFFFFF' 
+                    },
+                    style_cell_conditional=[
+                        {'if':{'column_id':'Mes'}, 'textAlign':'center', 'fontWeight':'bold', 'color': '#0B2D5B', 'backgroundColor': '#F8FAFC'},
+                    ],
+                    style_header={
+                        'backgroundColor':'#0B2D5B', 'color':'white', 'fontWeight':'700', 
+                        'textAlign':'center', 'border': '1px solid #0B2D5B'
+                    },
+                    style_data_conditional=[
+                        {'if': {'row_index': 'odd'}, 'backgroundColor': '#F8FAFC'}
+                    ],
+                    sort_action='custom',  # Esto obliga a usar nuestro algoritmo cronológico
+                    sort_mode='single',
+                    sort_by=[],
+                    page_action='native'
+                )
+            ]
+        ),
         html.Div(id='graph-container', style={'width': '100%', 'background': '#FFFFFF', 'borderRadius': '12px', 'padding': '15px', 'boxShadow': '0 1px 3px rgba(0,0,0,0.05)'})
     ], style={'padding': '0 15px'}),
 
@@ -277,8 +320,10 @@ def update_store(upload_contents, upload_names):
     metricas = [c for c in df.columns if c != 'Mes']
     metric_options = [{'label': m, 'value': m} for m in metricas]
     
-    meses_unicos = sorted(df['Mes'].unique())
+    # Aquí aplicamos el orden cronológico al filtro desplegable "Filtrar por Mes"
+    meses_unicos = sorted(df['Mes'].unique(), key=obtener_clave_orden)
     mes_options = [{'label': m, 'value': m} for m in meses_unicos]
+    
     col_options = [{'label': c, 'value': c} for c in columnas if c != 'Mes']
     
     status_msg = html.Div(f'✓ {len(df)} archivos mensuales procesados exitosamente.', style={'color': '#10B981', 'padding': '10px 0'})
@@ -286,17 +331,19 @@ def update_store(upload_contents, upload_names):
 
 
 @app.callback(
-    Output('table-container', 'children'),
+    Output('main-table', 'columns'),
+    Output('main-table', 'data'),
     Output('graph-container', 'children'),
     Input('df-store', 'data'),
     Input('metric-dropdown', 'value'),
     Input('chart-type', 'value'),
     Input('mes-filter', 'value'),
-    Input('columns-filter', 'value')
+    Input('columns-filter', 'value'),
+    Input('main-table', 'sort_by') # Detecta cuando el usuario hace clic en las flechas de la tabla
 )
-def update_views(df_json, metric, chart_type, meses_seleccionados, columnas_seleccionadas):
+def update_views(df_json, metric, chart_type, meses_seleccionados, columnas_seleccionadas, sort_by):
     if not df_json:
-        return html.Div('Esperando carga de archivos...', style={'textAlign': 'center', 'color': '#64748B', 'padding': '20px'}), html.Div()
+        return [], [], html.Div('Esperando carga de archivos...', style={'textAlign': 'center', 'color': '#64748B', 'padding': '20px'})
     
     try:
         df = pd.read_json(io.StringIO(df_json), orient='split')
@@ -307,22 +354,29 @@ def update_views(df_json, metric, chart_type, meses_seleccionados, columnas_sele
         df = df[df['Mes'].isin(meses_seleccionados)]
     
     if df.empty:
-        return html.Div('Sin datos coincidentes con los filtros aplicados.', style={'color': '#EF4444'}), html.Div()
+        return [], [], html.Div('Sin datos coincidentes con los filtros aplicados.', style={'color': '#EF4444', 'textAlign': 'center', 'padding': '20px'})
     
-    mes_map = {
-        'ENERO': 1, 'FEBRERO': 2, 'MARZO': 3, 'ABRIL': 4, 'MAYO': 5, 'JUNIO': 6,
-        'JULIO': 7, 'AGOSTO': 8, 'SEPTIEMBRE': 9, 'OCTUBRE': 10, 'NOVIEMBRE': 11, 'DICIEMBRE': 12
-    }
+    # Aplicar clave oculta para ordenamiento inteligente
+    df['_sort_key'] = df['Mes'].apply(obtener_clave_orden)
     
-    def sort_key(mes_str):
-        parts = mes_str.split()
-        if len(parts) == 2:
-            mes_name, año = parts
-            return (int(año), mes_map.get(mes_name.upper(), 0))
-        return (0, 0)
-    
-    df['_sort_key'] = df['Mes'].apply(sort_key)
-    df = df.sort_values('_sort_key').drop('_sort_key', axis=1)
+    # Lógica que detecta la flecha que presionó el usuario en la tabla
+    if sort_by and len(sort_by) > 0:
+        col_id = sort_by[0]['column_id']
+        direction = sort_by[0]['direction']
+        ascendente = (direction == 'asc')
+        
+        if col_id == 'Mes':
+            # Si presiona 'Mes', usa nuestra lógica cronológica
+            df = df.sort_values('_sort_key', ascending=ascendente)
+        else:
+            # Si presiona otra métrica, ordena matemáticamente
+            df = df.sort_values(col_id, ascending=ascendente)
+    else:
+        # Por defecto: ascendente cronológico (Enero a Diciembre)
+        df = df.sort_values('_sort_key', ascending=True)
+
+    # Limpiamos la columna oculta
+    df = df.drop('_sort_key', axis=1)
 
     display_df = df.copy()
     if columnas_seleccionadas and len(columnas_seleccionadas) > 0:
@@ -330,89 +384,27 @@ def update_views(df_json, metric, chart_type, meses_seleccionados, columnas_sele
         display_df = display_df[columnas_a_mostrar]
 
     columns_table = []
-
     for c in display_df.columns:
-
         if c == "Mes":
-            columns_table.append({
-                "name": c,
-                "id": c,
-                "type": "text"
-            })
-
+            columns_table.append({"name": c, "id": c, "type": "text"})
         elif "%" in c:
             columns_table.append({
-                "name": c,
-                "id": c,
-                "type": "numeric",
-                "format": Format(
-                    precision=2,
-                    scheme=Scheme.percentage
-                )
+                "name": c, "id": c, "type": "numeric",
+                "format": Format(precision=2, scheme=Scheme.percentage)
             })
-
         else:
-            # CAMBIO AQUÍ: Se añade symbol=Symbol.yes para agregar el signo de pesos automáticamente
             columns_table.append({
-                "name": c,
-                "id": c,
-                "type": "numeric",
-                "format": Format(
-                    precision=2, 
-                    scheme=Scheme.fixed, 
-                    group=Group.yes,
-                    symbol=Symbol.yes
-                )
+                "name": c, "id": c, "type": "numeric",
+                "format": Format(precision=2, scheme=Scheme.fixed, group=Group.yes, symbol=Symbol.yes)
             })
-
-    # TABLA CON ESTILO EJECUTIVO Y COLUMNA "MES" FIJADA
-    table = dash_table.DataTable(
-        id='main-table',
-        columns=columns_table,
-        data=display_df.to_dict('records'),
-        page_size=50,
-        
-        fixed_columns={'headers': True, 'data': 1},
-        
-        style_table={
-            'width':'100%', 
-            'minWidth':'100%', 
-            'overflowX':'auto'
-        },
-        style_cell={
-            'textAlign':'right',
-            'padding':'12px 15px',
-            'minWidth':'140px',
-            'width':'140px',
-            'maxWidth':'140px',
-            'fontFamily': 'Segoe UI, sans-serif',
-            'color': '#334155',
-            'border': '1px solid #E2E8F0',
-            'backgroundColor': '#FFFFFF' 
-        },
-        style_cell_conditional=[
-            {'if':{'column_id':'Mes'}, 'textAlign':'center', 'fontWeight':'bold', 'color': '#0B2D5B', 'backgroundColor': '#F8FAFC'},
-        ],
-        style_header={
-            'backgroundColor':'#0B2D5B', 
-            'color':'white', 
-            'fontWeight':'700', 
-            'textAlign':'center',
-            'border': '1px solid #0B2D5B'
-        },
-        style_data_conditional=[
-            {'if': {'row_index': 'odd'}, 'backgroundColor': '#F8FAFC'}
-        ],
-        sort_action='native',
-        sort_mode='single',
-        page_action='native'
-    )
 
     # GRÁFICA 
     fig = None
     if metric and metric in df.columns and not df.empty:
-        x = df['Mes'].tolist()
-        y = df[metric].tolist()
+        # Para la gráfica, siempre mantenemos el orden cronológico natural
+        df_graph = df.sort_values(by='Mes', key=lambda col: col.apply(obtener_clave_orden))
+        x = df_graph['Mes'].tolist()
+        y = df_graph[metric].tolist()
         
         if chart_type == 'lines':
             fig = go.Figure(go.Scatter(
@@ -446,7 +438,7 @@ def update_views(df_json, metric, chart_type, meses_seleccionados, columnas_sele
 
     graph = dcc.Graph(figure=fig, config={'displayModeBar': False}) if fig else html.Div()
 
-    return table, graph
+    return columns_table, display_df.to_dict('records'), graph
 
 
 if __name__ == '__main__':
