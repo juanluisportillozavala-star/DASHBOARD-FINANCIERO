@@ -8,7 +8,9 @@ from dash.dash_table.Format import Format, Scheme, Group, Symbol
 import plotly.graph_objs as go
 
 print("Iniciando servidor Dash para el dashboard web")
-
+# ==================== CONFIGURACIÓN DEL LOGO ====================
+# FALTA ESTA LÍNEA: Define la ubicación del proyecto
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 # ==================== CONFIGURACIÓN DEL LOGO ====================
 PATH_DEL_LOGO = os.path.join(BASE_DIR,"logo.png")
 
