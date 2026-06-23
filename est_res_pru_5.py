@@ -4,14 +4,13 @@ import os
 import pandas as pd
 from flask import Flask
 from dash import Dash, dcc, html, Input, Output, State, dash_table
+from dash.dash_table.Format import Format, Scheme, Group, Symbol
 import plotly.graph_objs as go
 
 print("Iniciando servidor Dash para el dashboard web")
 
 # ==================== CONFIGURACIÓN DEL LOGO ====================
-# Se ajustó la ruta para que busque el logo en la misma carpeta del script (ideal para producción)
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-PATH_DEL_LOGO = os.path.join(BASE_DIR, "logo.png")
+PATH_DEL_LOGO = r"G:\.shortcut-targets-by-id\1O42JJ1RYQb6m-tNq3bxzW8jZQY7iGTAV\LIDERZA 2025\JUAN PORTILLO\REDES SOCIALES\logo.png"
 
 def encode_image(path):
     try:
@@ -323,29 +322,54 @@ def update_views(df_json, metric, chart_type, meses_seleccionados, columnas_sele
     df['_sort_key'] = df['Mes'].apply(sort_key)
     df = df.sort_values('_sort_key').drop('_sort_key', axis=1)
 
-    # -------------------------------------------------------------
-    # SOLUCIÓN: Crear un DataFrame exclusivo para la tabla
-    # Esto evita que quitar columnas rompa la lógica de la gráfica
-    # -------------------------------------------------------------
     display_df = df.copy()
     if columnas_seleccionadas and len(columnas_seleccionadas) > 0:
         columnas_a_mostrar = ['Mes'] + columnas_seleccionadas
         display_df = display_df[columnas_a_mostrar]
 
-    for col in display_df.columns:
-        if '%' in col:
-            display_df[col] = display_df[col].apply(lambda x: f"{x:.2%}")
-        elif col != 'Mes':
-            display_df[col] = display_df[col].apply(lambda x: f"${x:,.2f}")
+    columns_table = []
+
+    for c in display_df.columns:
+
+        if c == "Mes":
+            columns_table.append({
+                "name": c,
+                "id": c,
+                "type": "text"
+            })
+
+        elif "%" in c:
+            columns_table.append({
+                "name": c,
+                "id": c,
+                "type": "numeric",
+                "format": Format(
+                    precision=2,
+                    scheme=Scheme.percentage
+                )
+            })
+
+        else:
+            # CAMBIO AQUÍ: Se añade symbol=Symbol.yes para agregar el signo de pesos automáticamente
+            columns_table.append({
+                "name": c,
+                "id": c,
+                "type": "numeric",
+                "format": Format(
+                    precision=2, 
+                    scheme=Scheme.fixed, 
+                    group=Group.yes,
+                    symbol=Symbol.yes
+                )
+            })
 
     # TABLA CON ESTILO EJECUTIVO Y COLUMNA "MES" FIJADA
     table = dash_table.DataTable(
         id='main-table',
-        columns=[{"name": c, "id": c} for c in display_df.columns],
+        columns=columns_table,
         data=display_df.to_dict('records'),
         page_size=50,
         
-        # --- AQUÍ SE FIJA LA COLUMNA DE MESES ---
         fixed_columns={'headers': True, 'data': 1},
         
         style_table={
@@ -362,7 +386,7 @@ def update_views(df_json, metric, chart_type, meses_seleccionados, columnas_sele
             'fontFamily': 'Segoe UI, sans-serif',
             'color': '#334155',
             'border': '1px solid #E2E8F0',
-            'backgroundColor': '#FFFFFF' # Fondo sólido para que no se traslape al hacer scroll
+            'backgroundColor': '#FFFFFF' 
         },
         style_cell_conditional=[
             {'if':{'column_id':'Mes'}, 'textAlign':'center', 'fontWeight':'bold', 'color': '#0B2D5B', 'backgroundColor': '#F8FAFC'},
@@ -378,10 +402,11 @@ def update_views(df_json, metric, chart_type, meses_seleccionados, columnas_sele
             {'if': {'row_index': 'odd'}, 'backgroundColor': '#F8FAFC'}
         ],
         sort_action='native',
+        sort_mode='single',
         page_action='native'
     )
 
-    # GRÁFICA (Toma la info de "df" original, que siempre tiene todas las columnas)
+    # GRÁFICA 
     fig = None
     if metric and metric in df.columns and not df.empty:
         x = df['Mes'].tolist()
