@@ -4,12 +4,14 @@ import os
 import pandas as pd
 from flask import Flask
 from dash import Dash, dcc, html, Input, Output, State, dash_table
+from dash.dash_table.Format import Format, Scheme, Group, Symbol
 import plotly.graph_objs as go
 
 print("Iniciando servidor Dash para el dashboard web")
 
 # ==================== CONFIGURACIÓN DEL LOGO ====================
-PATH_DEL_LOGO = r"G:\.shortcut-targets-by-id\1O42JJ1RYQb6m-tNq3bxzW8jZQY7iGTAV\LIDERZA 2025\JUAN PORTILLO\REDES SOCIALES\LOGO LIDERZA.png"
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+PATH_DEL_LOGO = os.path.join(BASE_DIR, "logo.png")
 
 def encode_image(path):
     try:
@@ -19,6 +21,20 @@ def encode_image(path):
         return ""
 
 logo_base64 = encode_image(PATH_DEL_LOGO)
+
+# ==================== DICCIONARIO DE MESES (SOLUCIÓN ORDEN) ====================
+MESES_ORDEN = {
+    'ENERO': 1, 'FEBRERO': 2, 'MARZO': 3, 'ABRIL': 4, 
+    'MAYO': 5, 'JUNIO': 6, 'JULIO': 7, 'AGOSTO': 8, 
+    'SEPTIEMBRE': 9, 'OCTUBRE': 10, 'NOVIEMBRE': 11, 'DICIEMBRE': 12
+}
+
+def obtener_clave_orden(mes_str):
+    partes = str(mes_str).split()
+    if len(partes) == 2:
+        mes, año = partes
+        return (int(año), MESES_ORDEN.get(mes.upper(), 0))
+    return (0, 0)
 
 
 # ---------------------- LÓGICA DE PROCESAMIENTO ----------------------
@@ -32,86 +48,31 @@ def obtener_valor(df, cuenta, columna):
             return float(valor)
     return 0.0
 
-def obtener_704_04(df):
+def obtener_704_04(df, columna):
     texto_busqueda = "704.04"
     for i in range(len(df)):
         valor_cuenta = str(df.iat[i, 1]).strip()
         if texto_busqueda in valor_cuenta:
-            valor = df.iat[i, 7]
-            if pd.isna(valor):
-                return 0.0
-            return float(valor)
-    return 0.0
-
-
-def obtener_movimiento(df, cuenta, columna):
-    for i in range(len(df)):
-        valor_cuenta = str(df.iat[i, 1]).strip()
-        if valor_cuenta.lower() == cuenta.lower():
             valor = df.iat[i, columna]
             if pd.isna(valor):
                 return 0.0
             return float(valor)
     return 0.0
 
-def procesar_archivo_bytes_edo2(content, filename):
-    header, encoded = content.split(",", 1)
-    data = base64.b64decode(encoded)
-    df = pd.read_excel(io.BytesIO(data), header=None)
-
-    ingresos = obtener_movimiento(df, "4 Ingresos", 5)
-    costos = obtener_movimiento(df, "5 Costos", 4) - obtener_movimiento(df, "5 Costos", 5)
-    gastos_generales = obtener_movimiento(df, "6 Gastos generales", 4) + obtener_movimiento(df, "701.10 Comisiones bancarias", 4)
-    gastos_financieros = (obtener_movimiento(df, "701.01 Pérdida cambiaria", 4)
-                          - obtener_movimiento(df, "701.01 Pérdida cambiaria", 5)
-                          + obtener_movimiento(df, "701.04 Intereses a cargo bancario nacional", 4))
-    productos_financieros = obtener_movimiento(df, "702.01 Utilidad cambiaria", 5) - obtener_movimiento(df, "702.01 Utilidad cambiaria", 4)
-
-    utilidad_bruta = ingresos - costos
-    utilidad_operacion = utilidad_bruta - gastos_generales
-    utilidad_neta = utilidad_operacion - gastos_financieros + productos_financieros
-
-    if ingresos > 0:
-        p_costos = costos / ingresos
-        p_ubruta = utilidad_bruta / ingresos
-        p_ggen = gastos_generales / ingresos
-        p_uoper = utilidad_operacion / ingresos
-        p_gfin = gastos_financieros / ingresos
-        p_pfin = productos_financieros / ingresos
-        p_uneta = utilidad_neta / ingresos
-    else:
-        p_costos = p_ubruta = p_ggen = p_uoper = p_gfin = p_pfin = p_uneta = 0.0
-
-    return {
-        "Ingresos": ingresos, "Costos": costos, "% Costos": p_costos,
-        "Utilidad Bruta": utilidad_bruta, "% Utilidad Bruta": p_ubruta,
-        "Gastos Generales": gastos_generales, "% Gastos Gen.": p_ggen,
-        "Utilidad Operación": utilidad_operacion, "% Util. Operación": p_uoper,
-        "Gastos Financieros": gastos_financieros, "% Gastos Fin.": p_gfin,
-        "Productos Financieros": productos_financieros, "% Prod. Fin.": p_pfin,
-        "Utilidad Neta": utilidad_neta, "% Utilidad Neta": p_uneta,
-        "Mes": os.path.splitext(os.path.basename(filename))[0]
-    }
-
-
-def procesar_archivo_bytes(content, filename):
-    header, encoded = content.split(",", 1)
-    data = base64.b64decode(encoded)
-    df = pd.read_excel(io.BytesIO(data), header=None)
-
-    ingresos = obtener_valor(df, "4 Ingresos", 7) + obtener_704_04(df)
-    costos = obtener_valor(df, "5 Costos", 6)
+def calcular_metricas_por_columnas(df, col_debe, col_haber, filename):
+    ingresos = obtener_valor(df, "4 Ingresos", col_haber) + obtener_704_04(df, col_haber)
+    costos = obtener_valor(df, "5 Costos", col_debe)
     gastos_generales = (
-        obtener_valor(df, "6 Gastos generales", 6)
-        + obtener_valor(df, "701.10 Comisiones bancarias", 6)
+        obtener_valor(df, "6 Gastos generales", col_debe)
+        + obtener_valor(df, "701.10 Comisiones bancarias", col_debe)
     )
     utilidad_bruta = ingresos - costos
     utilidad_operacion = utilidad_bruta - gastos_generales
     gastos_financieros = (
-        obtener_valor(df, "701.01 Pérdida cambiaria", 6)
-        + obtener_valor(df, "701.04 Intereses a cargo bancario nacional", 6)
+        obtener_valor(df, "701.01 Pérdida cambiaria", col_debe)
+        + obtener_valor(df, "701.04 Intereses a cargo bancario nacional", col_debe)
     )
-    productos_financieros = obtener_valor(df, "702.01 Utilidad cambiaria", 7)
+    productos_financieros = obtener_valor(df, "702.01 Utilidad cambiaria", col_haber)
     utilidad_neta = utilidad_operacion - gastos_financieros + productos_financieros
 
     if ingresos > 0:
@@ -143,6 +104,21 @@ def procesar_archivo_bytes(content, filename):
         "% Utilidad Neta": p_uneta,
         "Mes": os.path.splitext(os.path.basename(filename))[0]
     }
+
+def procesar_archivo_bytes(content, filename):
+    header, encoded = content.split(",", 1)
+    data = base64.b64decode(encoded)
+    df = pd.read_excel(io.BytesIO(data), header=None)
+
+    # Cálculo Acumulado (Columnas de Saldos Finales: Debe=6, Haber=7)
+    data_acumulada = calcular_metricas_por_columnas(df, col_debe=6, col_haber=7, filename=filename)
+    data_acumulada["Tipo_Reporte"] = "Acumulado"
+
+    # Cálculo Mensual (Columnas de Movimientos del Mes: Debe=4, Haber=5)
+    data_mensual = calcular_metricas_por_columnas(df, col_debe=4, col_haber=5, filename=filename)
+    data_mensual["Tipo_Reporte"] = "Mensual"
+
+    return data_acumulada, data_mensual
 
 
 # ---------------------- APP Dash ----------------------
@@ -186,6 +162,29 @@ app.index_string = """
 </html>
 """
 
+# Estilos personalizados para las pestañas
+estilo_tab = {
+    'borderBottom': '1px solid #E2E8F0',
+    'padding': '12px 24px',
+    'fontWeight': '600',
+    'color': '#64748B',
+    'backgroundColor': '#F8FAFC',
+    'borderRadius': '8px 8px 0px 0px',
+    'marginRight': '4px'
+}
+
+estilo_tab_seleccionada = {
+    'borderTop': '3px solid #0B2D5B',
+    'borderBottom': '3px solid #C9A227',
+    'backgroundColor': '#FFFFFF',
+    'padding': '11px 24px',
+    'color': '#0B2D5B',
+    'fontWeight': '700',
+    'borderRadius': '8px 8px 0px 0px',
+    'marginRight': '4px',
+    'boxShadow': '0px -2px 5px rgba(0,0,0,0.02)'
+}
+
 app.layout = html.Div([
     
     # HEADER
@@ -204,7 +203,7 @@ app.layout = html.Div([
             ),
             html.Div([
                 html.H2("ESTADO DE RESULTADOS 2026", style={'color': '#FFFFFF', 'margin': '0', 'fontWeight': '700', 'fontSize': '26px', 'letterSpacing': '0.5px'}),
-                html.Div("Sistema Interno de Análisis Financiero | Control Mensual", style={'color': '#C9A227', 'fontSize': '13px', 'fontWeight': '5px', 'marginTop': '2px'})
+                html.Div("Sistema Interno de Análisis Financiero | Control Mensual y Acumulado", style={'color': '#C9A227', 'fontSize': '13px', 'fontWeight': '5px', 'marginTop': '2px'})
             ], style={'display': 'inline-block', 'verticalAlign': 'middle'})
         ], style={'display': 'flex', 'alignItems': 'center'})
     ], style={
@@ -277,14 +276,48 @@ app.layout = html.Div([
         'boxShadow': '0 1px 3px rgba(0,0,0,0.05)'
     }),
 
+    # NAVEGACIÓN POR PESTAÑAS (ACUMULADO VS MENSUAL)
+    dcc.Tabs(id='report-tab', value='acumulado', children=[
+        dcc.Tab(label='Estado de Resultados Acumulado', value='acumulado', style=estilo_tab, selected_style=estilo_tab_seleccionada),
+        dcc.Tab(label='Estado de Resultados Mensual', value='mensual', style=estilo_tab, selected_style=estilo_tab_seleccionada)
+    ], style={'margin': '0 15px'}),
+
     # CONTENEDORES DE REPORTES Y GRÁFICOS
     html.Div([
-        html.Div(id='table-container', style={'width': '100%', 'marginBottom': '25px', 'background': '#FFFFFF', 'borderRadius': '12px', 'padding': '15px', 'boxShadow': '0 1px 3px rgba(0,0,0,0.05)'}),
+        html.Div(
+            style={'width': '100%', 'marginBottom': '25px', 'background': '#FFFFFF', 'borderRadius': '0px 0px 12px 12px', 'padding': '20px', 'boxShadow': '0 1px 3px rgba(0,0,0,0.05)', 'borderTop': '1px solid #E2E8F0'},
+            children=[
+                dash_table.DataTable(
+                    id='main-table',
+                    page_size=50,
+                    fixed_columns={'headers': True, 'data': 1},
+                    style_table={'width':'100%', 'minWidth':'100%', 'overflowX':'auto'},
+                    style_cell={
+                        'textAlign':'right', 'padding':'12px 15px', 'minWidth':'140px', 
+                        'width':'140px', 'maxWidth':'140px', 'fontFamily': 'Segoe UI, sans-serif', 
+                        'color': '#334155', 'border': '1px solid #E2E8F0', 'backgroundColor': '#FFFFFF' 
+                    },
+                    style_cell_conditional=[
+                        {'if':{'column_id':'Mes'}, 'textAlign':'center', 'fontWeight':'bold', 'color': '#0B2D5B', 'backgroundColor': '#F8FAFC'},
+                    ],
+                    style_header={
+                        'backgroundColor':'#0B2D5B', 'color':'white', 'fontWeight':'700', 
+                        'textAlign':'center', 'border': '1px solid #0B2D5B'
+                    },
+                    style_data_conditional=[
+                        {'if': {'row_index': 'odd'}, 'backgroundColor': '#F8FAFC'}
+                    ],
+                    sort_action='custom',
+                    sort_mode='single',
+                    sort_by=[],
+                    page_action='native'
+                )
+            ]
+        ),
         html.Div(id='graph-container', style={'width': '100%', 'background': '#FFFFFF', 'borderRadius': '12px', 'padding': '15px', 'boxShadow': '0 1px 3px rgba(0,0,0,0.05)'})
     ], style={'padding': '0 15px'}),
 
-    dcc.Store(id='df-store'),
-    dcc.Store(id='tipo-estado-store', data='edo1')
+    dcc.Store(id='df-store')
 ], style={
     'width':'100%',
     'maxWidth':'100%',
@@ -315,127 +348,106 @@ def update_store(upload_contents, upload_names):
 
     for content, name in valid_files:
         try:
-            datos = procesar_archivo_bytes(content, name)
-            resultados.append(datos)
+            acum, mens = procesar_archivo_bytes(content, name)
+            resultados.append(acum)
+            resultados.append(mens)
         except Exception as e:
             return None, html.Div(f"Error procesando {name}: {e}", style={'color': '#EF4444'}), [], None, [], []
 
     df = pd.DataFrame(resultados)
-    columnas = ['Mes'] + [c for c in df.columns if c != 'Mes']
-    df = df[columnas]
-    metricas = [c for c in df.columns if c != 'Mes']
-    metric_options = [{'label': m, 'value': m} for m in metricas]
     
-    meses_unicos = sorted(df['Mes'].unique())
+    # Reordenamiento de columnas base excluyendo las de control interno
+    columnas_base = [c for c in df.columns if c not in ['Mes', 'Tipo_Reporte']]
+    columnas_ordenadas = ['Tipo_Reporte', 'Mes'] + columnas_base
+    df = df[columnas_ordenadas]
+    
+    metric_options = [{'label': m, 'value': m} for m in columnas_base]
+    
+    meses_unicos = sorted(df['Mes'].unique(), key=obtener_clave_orden)
     mes_options = [{'label': m, 'value': m} for m in meses_unicos]
-    col_options = [{'label': c, 'value': c} for c in columnas if c != 'Mes']
     
-    status_msg = html.Div(f'✓ {len(df)} archivos mensuales procesados exitosamente.', style={'color': '#10B981', 'padding': '10px 0'})
-    return df.to_json(date_format='iso', orient='split'), status_msg, metric_options, ('Utilidad Neta' if 'Utilidad Neta' in metricas else metricas[0]), mes_options, col_options
+    col_options = [{'label': c, 'value': c} for c in columnas_base]
+    
+    status_msg = html.Div(f'✓ {len(df) // 2} períodos mensuales cargados (Métricas Mensuales y Acumuladas calculadas con éxito).', style={'color': '#10B981', 'padding': '10px 0'})
+    return df.to_json(date_format='iso', orient='split'), status_msg, metric_options, ('Utilidad Neta' if 'Utilidad Neta' in columnas_base else columnas_base[0]), mes_options, col_options
 
 
 @app.callback(
-    Output('table-container', 'children'),
+    Output('main-table', 'columns'),
+    Output('main-table', 'data'),
     Output('graph-container', 'children'),
     Input('df-store', 'data'),
+    Input('report-tab', 'value'),
     Input('metric-dropdown', 'value'),
     Input('chart-type', 'value'),
     Input('mes-filter', 'value'),
-    Input('columns-filter', 'value')
+    Input('columns-filter', 'value'),
+    Input('main-table', 'sort_by')
 )
-def update_views(df_json, metric, chart_type, meses_seleccionados, columnas_seleccionadas):
+def update_views(df_json, tab_seleccionado, metric, chart_type, meses_seleccionados, columnas_seleccionadas, sort_by):
     if not df_json:
-        return html.Div('Esperando carga de archivos...', style={'textAlign': 'center', 'color': '#64748B', 'padding': '20px'}), html.Div()
+        return [], [], html.Div('Esperando carga de archivos...', style={'textAlign': 'center', 'color': '#64748B', 'padding': '20px'})
     
     try:
         df = pd.read_json(io.StringIO(df_json), orient='split')
     except ValueError:
         df = pd.read_json(df_json, orient='split')
     
+    # FILTRO 1: Separar por la pestaña seleccionada (Acumulado vs Mensual)
+    filtro_tipo = "Acumulado" if tab_seleccionado == "acumulado" else "Mensual"
+    df = df[df['Tipo_Reporte'] == filtro_tipo]
+    df = df.drop('Tipo_Reporte', axis=1) # Removemos columna interna para no saturar la vista
+    
+    # FILTRO 2: Filtrado por mes si se especifica
     if meses_seleccionados and len(meses_seleccionados) > 0:
         df = df[df['Mes'].isin(meses_seleccionados)]
     
     if df.empty:
-        return html.Div('Sin datos coincidentes con los filtros aplicados.', style={'color': '#EF4444'}), html.Div()
+        return [], [], html.Div('Sin datos coincidentes con los filtros aplicados.', style={'color': '#EF4444', 'textAlign': 'center', 'padding': '20px'})
     
-    mes_map = {
-        'ENERO': 1, 'FEBRERO': 2, 'MARZO': 3, 'ABRIL': 4, 'MAYO': 5, 'JUNIO': 6,
-        'JULIO': 7, 'AGOSTO': 8, 'SEPTIEMBRE': 9, 'OCTUBRE': 10, 'NOVIEMBRE': 11, 'DICIEMBRE': 12
-    }
+    # Aplicar clave oculta para ordenamiento inteligente
+    df['_sort_key'] = df['Mes'].apply(obtener_clave_orden)
     
-    def sort_key(mes_str):
-        parts = mes_str.split()
-        if len(parts) == 2:
-            mes_name, año = parts
-            return (int(año), mes_map.get(mes_name.upper(), 0))
-        return (0, 0)
-    
-    df['_sort_key'] = df['Mes'].apply(sort_key)
-    df = df.sort_values('_sort_key').drop('_sort_key', axis=1)
+    if sort_by and len(sort_by) > 0:
+        col_id = sort_by[0]['column_id']
+        direction = sort_by[0]['direction']
+        ascendente = (direction == 'asc')
+        
+        if col_id == 'Mes':
+            df = df.sort_values('_sort_key', ascending=ascendente)
+        else:
+            df = df.sort_values(col_id, ascending=ascendente)
+    else:
+        df = df.sort_values('_sort_key', ascending=True)
 
-    # -------------------------------------------------------------
-    # SOLUCIÓN: Crear un DataFrame exclusivo para la tabla
-    # Esto evita que quitar columnas rompa la lógica de la gráfica
-    # -------------------------------------------------------------
+    df = df.drop('_sort_key', axis=1)
+
     display_df = df.copy()
     if columnas_seleccionadas and len(columnas_seleccionadas) > 0:
         columnas_a_mostrar = ['Mes'] + columnas_seleccionadas
         display_df = display_df[columnas_a_mostrar]
 
-    for col in display_df.columns:
-        if '%' in col:
-            display_df[col] = display_df[col].apply(lambda x: f"{x:.2%}")
-        elif col != 'Mes':
-            display_df[col] = display_df[col].apply(lambda x: f"${x:,.2f}")
+    columns_table = []
+    for c in display_df.columns:
+        if c == "Mes":
+            columns_table.append({"name": c, "id": c, "type": "text"})
+        elif "%" in c:
+            columns_table.append({
+                "name": c, "id": c, "type": "numeric",
+                "format": Format(precision=2, scheme=Scheme.percentage)
+            })
+        else:
+            columns_table.append({
+                "name": c, "id": c, "type": "numeric",
+                "format": Format(precision=2, scheme=Scheme.fixed, group=Group.yes, symbol=Symbol.yes)
+            })
 
-    # TABLA CON ESTILO EJECUTIVO Y COLUMNA "MES" FIJADA
-    table = dash_table.DataTable(
-        id='main-table',
-        columns=[{"name": c, "id": c} for c in display_df.columns],
-        data=display_df.to_dict('records'),
-        page_size=50,
-        
-        # --- AQUÍ SE FIJA LA COLUMNA DE MESES ---
-        fixed_columns={'headers': True, 'data': 1},
-        
-        style_table={
-            'width':'100%', 
-            'minWidth':'100%', 
-            'overflowX':'auto'
-        },
-        style_cell={
-            'textAlign':'right',
-            'padding':'12px 15px',
-            'minWidth':'140px',
-            'width':'140px',
-            'maxWidth':'140px',
-            'fontFamily': 'Segoe UI, sans-serif',
-            'color': '#334155',
-            'border': '1px solid #E2E8F0',
-            'backgroundColor': '#FFFFFF' # Fondo sólido para que no se traslape al hacer scroll
-        },
-        style_cell_conditional=[
-            {'if':{'column_id':'Mes'}, 'textAlign':'center', 'fontWeight':'bold', 'color': '#0B2D5B', 'backgroundColor': '#F8FAFC'},
-        ],
-        style_header={
-            'backgroundColor':'#0B2D5B', 
-            'color':'white', 
-            'fontWeight':'700', 
-            'textAlign':'center',
-            'border': '1px solid #0B2D5B'
-        },
-        style_data_conditional=[
-            {'if': {'row_index': 'odd'}, 'backgroundColor': '#F8FAFC'}
-        ],
-        sort_action='native',
-        page_action='native'
-    )
-
-    # GRÁFICA (Toma la info de "df" original, que siempre tiene todas las columnas)
+    # GRÁFICA
     fig = None
     if metric and metric in df.columns and not df.empty:
-        x = df['Mes'].tolist()
-        y = df[metric].tolist()
+        df_graph = df.sort_values(by='Mes', key=lambda col: col.apply(obtener_clave_orden))
+        x = df_graph['Mes'].tolist()
+        y = df_graph[metric].tolist()
         
         if chart_type == 'lines':
             fig = go.Figure(go.Scatter(
@@ -458,7 +470,7 @@ def update_views(df_json, metric, chart_type, meses_seleccionados, columnas_sele
             fig.update_yaxes(tickprefix='$', separatethousands=True)
 
         fig.update_layout(
-            title={'text': f"Análisis Histórico: {metric}", 'font': {'size': 18, 'color': '#0B2D5B', 'family': 'Segoe UI'}},
+            title={'text': f"Análisis Histórico ({filtro_tipo}): {metric}", 'font': {'size': 18, 'color': '#0B2D5B', 'family': 'Segoe UI'}},
             margin={'t':50,'b':40, 'l': 60, 'r': 40}, 
             hovermode='x unified',
             plot_bgcolor='#FFFFFF',
@@ -469,7 +481,7 @@ def update_views(df_json, metric, chart_type, meses_seleccionados, columnas_sele
 
     graph = dcc.Graph(figure=fig, config={'displayModeBar': False}) if fig else html.Div()
 
-    return table, graph
+    return columns_table, display_df.to_dict('records'), graph
 
 
 if __name__ == '__main__':
