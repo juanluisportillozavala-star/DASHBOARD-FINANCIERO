@@ -34,21 +34,25 @@ def obtener_clave_orden(mes_str):
         return (int(año), MESES_ORDEN.get(mes.upper(), 0))
     return (0, 0)
 
-# ==================== UTILIDADES PARA DETECCIÓN DE ENCABEZADO Y COLUMNAS ====================
+# ==================== DETECCIÓN DE ENCABEZADO Y COLUMNAS ====================
 def detectar_encabezado_y_columnas(df):
     """
-    Busca la fila que contiene 'Código' y 'Nombre' y devuelve:
-    header_row_idx, col_code, col_name, col_debe, col_haber
-    Si no encuentra, devuelve índices por defecto pero imprime advertencia.
+    Detecta la fila de encabezado (si existe) y devuelve:
+    header_row_idx, col_code, col_name, movimiento_debe, movimiento_haber, saldo_debe, saldo_haber
+    - movimiento_debe/haber: columnas de cargo/abono (movimiento mensual) (ej. columnas 4/5 en tu archivo original)
+    - saldo_debe/haber: columnas de saldo final (ej. columnas 6/7 en tu archivo original)
+    Si no encuentra, aplica heurísticas y valores por defecto.
     """
-    col_code = col_name = col_debe = col_haber = None
+    col_code = col_name = None
+    mov_debe = mov_haber = None
+    sal_debe = sal_haber = None
     header_row_idx = 0
 
-    # Revisar primeras 12 filas para encontrar encabezado
+    # Buscar fila de encabezado en primeras 12 filas
     for r in range(min(12, len(df))):
         row_vals = [str(x).strip().lower() for x in df.iloc[r].fillna("").astype(str).tolist()]
         row_text = " ".join(row_vals)
-        if "código" in row_text or "codigo" in row_text or "nombre de la cuenta" in row_text:
+        if "código" in row_text or "codigo" in row_text or "nombre de la cuenta" in row_text or "nombre" in row_text:
             header_row_idx = r
             for c in range(df.shape[1]):
                 cell = str(df.iat[r, c]).strip().lower()
@@ -56,35 +60,49 @@ def detectar_encabezado_y_columnas(df):
                     col_code = c
                 if "nombre" in cell and "cuenta" in cell:
                     col_name = c
-                if cell in ["débito", "debito", "debe"]:
-                    col_debe = c
-                if cell in ["crédito", "credito", "haber"]:
-                    col_haber = c
+                if cell in ["cargo", "cargos", "cargo (debe)", "debe", "débito", "debito"]:
+                    # si no hay mov_debe asignado, asignar como movimiento; si ya hay, asignar como saldo
+                    if mov_debe is None:
+                        mov_debe = c
+                    elif sal_debe is None:
+                        sal_debe = c
+                if cell in ["abono", "abonos", "abono (haber)", "haber", "crédito", "credito"]:
+                    if mov_haber is None:
+                        mov_haber = c
+                    elif sal_haber is None:
+                        sal_haber = c
             break
 
-    # Heurística si no se detectó encabezado
+    # Si no se detectó encabezado, heurística por contenido
     if col_code is None or col_name is None:
-        # Buscar columna con patrones de códigos (ej. '101', '201', '115')
         for c in range(df.shape[1]):
             sample = " ".join([str(x) for x in df.iloc[:8, c].fillna("").astype(str).tolist()]).lower()
-            # si hay muchos valores con punto o números de cuenta, asumimos que es la columna código
+            # detectar columna de códigos por patrón numérico con puntos
             if any(part.strip().replace('.', '').isdigit() and len(part.strip()) >= 3 for part in sample.split()):
                 if col_code is None:
                     col_code = c
+            # detectar columna de nombres por presencia de palabras 'clientes', 'proveedores', 'iva', 'inventario'
+            if any(k in sample for k in ['clientes', 'proveedores', 'iva', 'inventario', 'caja', 'efectivo']):
+                if col_name is None and c != col_code:
+                    col_name = c
 
-    # Asignar valores por defecto si aún faltan
+    # Si no detectó columnas de movimiento/saldo, usar posiciones por defecto (basadas en tu archivo original)
+    if mov_debe is None: mov_debe = 4
+    if mov_haber is None: mov_haber = 5
+    if sal_debe is None: sal_debe = 6
+    if sal_haber is None: sal_haber = 7
+
+    # Valores por defecto mínimos
     if col_code is None: col_code = 0
     if col_name is None: col_name = 1
-    if col_debe is None: col_debe = 6
-    if col_haber is None: col_haber = 7
 
-    return header_row_idx, col_code, col_name, col_debe, col_haber
+    return header_row_idx, col_code, col_name, mov_debe, mov_haber, sal_debe, sal_haber
 
-# ==================== EXTRACCIÓN DE CATÁLOGO ====================
+# ==================== CONSTRUCCIÓN DEL CATÁLOGO (CÓDIGOS EXACTOS) ====================
 def construir_catalogo(df, col_code, col_name):
     """
-    Recorre el df y construye un diccionario {codigo: nombre} con las filas que tengan código no vacío.
-    Devuelve además la lista ordenada de códigos detectados.
+    Construye diccionario {codigo: nombre} y lista ordenada de códigos detectados.
+    Solo incluye filas con código no vacío.
     """
     catalogo = {}
     for i in range(len(df)):
@@ -97,7 +115,31 @@ def construir_catalogo(df, col_code, col_name):
     codigos = sorted(catalogo.keys())
     return catalogo, codigos
 
-# ==================== BÚSQUEDAS Y SUMAS POR LISTA EXACTA ====================
+# ==================== SELECCIÓN DE CÓDIGOS (EXACTOS) CON COMPLEMENTO POR NOMBRE ====================
+def seleccionar_codigos_exactos(codigos_detectados, catalogo, prefijos=None, keywords=None):
+    """
+    Devuelve lista de códigos exactos que:
+    - pertenecen a los prefijos (si se pasa prefijos) OR
+    - cuyo nombre contiene alguna keyword (si se pasa keywords)
+    Combina ambas reglas para asegurar cobertura.
+    """
+    res = set()
+    if prefijos:
+        for c in codigos_detectados:
+            for p in prefijos:
+                if str(c).startswith(str(p)):
+                    res.add(c)
+                    break
+    if keywords:
+        for c in codigos_detectados:
+            nombre = catalogo.get(c, "").lower()
+            for k in keywords:
+                if k.lower() in nombre:
+                    res.add(c)
+                    break
+    return sorted(list(res))
+
+# ==================== SUMAS POR LISTA EXACTA ====================
 def obtener_saldo_por_catalogo_exacto(df, lista_codigos, col_code, col_debe, col_haber, es_acreedora=False):
     """
     Suma Débito y Crédito únicamente para los códigos exactos en lista_codigos.
@@ -123,29 +165,33 @@ def obtener_saldo_por_catalogo_exacto(df, lista_codigos, col_code, col_debe, col
 
     return (total_haber - total_debe) if es_acreedora else (total_debe - total_haber)
 
-# ==================== FUNCIONES EXISTENTES ADAPTADAS A COLUMNAS DINÁMICAS ====================
-def obtener_valor_por_nombre_o_codigo(df, buscado, col_code, col_name, col_val):
-    buscado_l = str(buscado).strip().lower()
+# ==================== BÚSQUEDAS POR TEXTO (para filas de ingresos/costos/gastos) ====================
+def buscar_valor_por_texto(df, texto, col_code, col_name, col_val):
+    """
+    Busca coincidencia exacta en código o coincidencia en nombre (case-insensitive).
+    Devuelve el valor en la columna col_val (ej. saldo final).
+    """
+    buscado_l = str(texto).strip().lower()
     for i in range(len(df)):
         codigo = str(df.iat[i, col_code]).strip().lower() if pd.notna(df.iat[i, col_code]) else ""
         nombre = str(df.iat[i, col_name]).strip().lower() if pd.notna(df.iat[i, col_name]) else ""
-        if codigo == buscado_l or nombre == buscado_l:
+        if codigo == buscado_l or buscado_l in nombre:
             val = df.iat[i, col_val]
             return float(val) if pd.notna(val) and val != "" else 0.0
     return 0.0
 
-def obtener_movimiento_neto_por_nombre_o_codigo(df, buscado, col_code, col_name, col_cargo, col_abono, es_acreedora=False):
-    buscado_l = str(buscado).strip().lower()
+def movimiento_neto_por_texto(df, texto, col_code, col_name, mov_debe, mov_haber, es_acreedora=False):
+    buscado_l = str(texto).strip().lower()
     for i in range(len(df)):
         codigo = str(df.iat[i, col_code]).strip().lower() if pd.notna(df.iat[i, col_code]) else ""
         nombre = str(df.iat[i, col_name]).strip().lower() if pd.notna(df.iat[i, col_name]) else ""
-        if codigo == buscado_l or nombre == buscado_l:
-            cargo = float(df.iat[i, col_cargo]) if not pd.isna(df.iat[i, col_cargo]) else 0.0
-            abono = float(df.iat[i, col_abono]) if not pd.isna(df.iat[i, col_abono]) else 0.0
+        if codigo == buscado_l or buscado_l in nombre:
+            cargo = float(df.iat[i, mov_debe]) if not pd.isna(df.iat[i, mov_debe]) else 0.0
+            abono = float(df.iat[i, mov_haber]) if not pd.isna(df.iat[i, mov_haber]) else 0.0
             return (abono - cargo) if es_acreedora else (cargo - abono)
     return 0.0
 
-# ==================== PROCESADOR PRINCIPAL DEL EXCEL (INTEGRADO) ====================
+# ==================== PROCESADOR PRINCIPAL DEL EXCEL ====================
 def procesar_archivo_bytes(content, filename):
     header, encoded = content.split(",", 1)
     data = base64.b64decode(encoded)
@@ -153,35 +199,27 @@ def procesar_archivo_bytes(content, filename):
 
     mes_nombre = os.path.splitext(os.path.basename(filename))[0]
 
-    # Detectar encabezado y columnas
-    header_row_idx, col_code, col_name, col_debe, col_haber = detectar_encabezado_y_columnas(df_raw)
+    # Detectar encabezado y columnas (movimiento y saldo)
+    header_row_idx, col_code, col_name, mov_debe, mov_haber, sal_debe, sal_haber = detectar_encabezado_y_columnas(df_raw)
 
     # Construir catálogo de cuentas (lista exacta de códigos)
     catalogo, codigos_detectados = construir_catalogo(df_raw, col_code, col_name)
-
-    # Si el catálogo está vacío, intentar heurística alternativa
     if not codigos_detectados:
-        # intentar tomar la columna 0 como códigos y 1 como nombres
+        # heurística alternativa si no detectó nada
         catalogo, codigos_detectados = construir_catalogo(df_raw, 0, 1)
 
-    # --- CÁLCULOS ESTADO DE RESULTADOS (ACUMULADO) ---
-    # Para compatibilidad con tu estructura original, buscamos por nombres de secciones
-    # Buscamos en la columna 'Nombre de la cuenta' (col_name) y tomamos la columna final (col_haber) o (col_debe) según corresponda
-    # Nota: aquí asumimos que en tu archivo los saldos acumulados están en las columnas 6/7 como antes; si no, se puede adaptar.
-    # Intentamos localizar las filas por texto exacto en la columna nombre
-    def buscar_saldo_por_texto(texto, col_val):
-        return obtener_valor_por_nombre_o_codigo(df_raw, texto, col_code, col_name, col_val)
-
-    # Ingresos acumulados: buscar "4 Ingresos" en nombre o código
-    ingresos_acum = buscar_saldo_por_texto("4 Ingresos", col_haber) + buscar_saldo_por_texto("704.04", col_haber)
-    costos_acum = buscar_saldo_por_texto("5 Costos", col_debe)
-    gastos_gen_acum = buscar_saldo_por_texto("6 Gastos generales", col_debe) + buscar_saldo_por_texto("701.10 Comisiones bancarias", col_debe)
+    # -------------------------
+    # ESTADO DE RESULTADOS ACUMULADO (usa columnas de saldo final)
+    # -------------------------
+    ingresos_acum = buscar_valor_por_texto(df_raw, "4 Ingresos", col_code, col_name, sal_haber) + buscar_valor_por_texto(df_raw, "704.04", col_code, col_name, sal_haber)
+    costos_acum = buscar_valor_por_texto(df_raw, "5 Costos", col_code, col_name, sal_debe)
+    gastos_gen_acum = buscar_valor_por_texto(df_raw, "6 Gastos generales", col_code, col_name, sal_debe) + buscar_valor_por_texto(df_raw, "701.10 Comisiones bancarias", col_code, col_name, sal_debe)
 
     utilidad_bruta_acum = ingresos_acum - costos_acum
     utilidad_operacion_acum = utilidad_bruta_acum - gastos_gen_acum
 
-    gastos_fin_acum = buscar_saldo_por_texto("701.01 Pérdida cambiaria", col_debe) + buscar_saldo_por_texto("701.04 Intereses a cargo bancario nacional", col_debe)
-    prod_fin_acum = buscar_saldo_por_texto("702.01 Utilidad cambiaria", col_haber)
+    gastos_fin_acum = buscar_valor_por_texto(df_raw, "701.01 Pérdida cambiaria", col_code, col_name, sal_debe) + buscar_valor_por_texto(df_raw, "701.04 Intereses a cargo bancario nacional", col_code, col_name, sal_debe)
+    prod_fin_acum = buscar_valor_por_texto(df_raw, "702.01 Utilidad cambiaria", col_code, col_name, sal_haber)
 
     utilidad_neta_acum = utilidad_operacion_acum - gastos_fin_acum + prod_fin_acum
 
@@ -196,19 +234,18 @@ def procesar_archivo_bytes(content, filename):
         "Utilidad Neta": utilidad_neta_acum, "% Utilidad Neta": utilidad_neta_acum/ingresos_acum if ingresos_acum else 0
     }
 
-    # --- CÁLCULOS ESTADO DE RESULTADOS (MENSUAL) ---
-    def buscar_movimiento_por_texto(texto, es_acreedora=False):
-        return obtener_movimiento_neto_por_nombre_o_codigo(df_raw, texto, col_code, col_name, col_debe, col_haber, es_acreedora)
-
-    ingresos_mes = buscar_movimiento_por_texto("4 Ingresos", es_acreedora=True) + buscar_movimiento_por_texto("704.04", es_acreedora=True)
-    costos_mes = buscar_movimiento_por_texto("5 Costos", es_acreedora=False)
-    gastos_gen_mes = buscar_movimiento_por_texto("6 Gastos generales", es_acreedora=False) + buscar_movimiento_por_texto("701.10 Comisiones bancarias", es_acreedora=False)
+    # -------------------------
+    # ESTADO DE RESULTADOS MENSUAL (usa columnas de movimiento: mov_debe/mov_haber)
+    # -------------------------
+    ingresos_mes = movimiento_neto_por_texto(df_raw, "4 Ingresos", col_code, col_name, mov_debe, mov_haber, es_acreedora=True) + movimiento_neto_por_texto(df_raw, "704.04", col_code, col_name, mov_debe, mov_haber, es_acreedora=True)
+    costos_mes = movimiento_neto_por_texto(df_raw, "5 Costos", col_code, col_name, mov_debe, mov_haber, es_acreedora=False)
+    gastos_gen_mes = movimiento_neto_por_texto(df_raw, "6 Gastos generales", col_code, col_name, mov_debe, mov_haber, es_acreedora=False) + movimiento_neto_por_texto(df_raw, "701.10 Comisiones bancarias", col_code, col_name, mov_debe, mov_haber, es_acreedora=False)
 
     utilidad_bruta_mes = ingresos_mes - costos_mes
     utilidad_operacion_mes = utilidad_bruta_mes - gastos_gen_mes
 
-    gastos_fin_mes = buscar_movimiento_por_texto("701.01 Pérdida cambiaria", es_acreedora=False) + buscar_movimiento_por_texto("701.04 Intereses a cargo bancario nacional", es_acreedora=False)
-    prod_fin_mes = buscar_movimiento_por_texto("702.01 Utilidad cambiaria", es_acreedora=True)
+    gastos_fin_mes = movimiento_neto_por_texto(df_raw, "701.01 Pérdida cambiaria", col_code, col_name, mov_debe, mov_haber, es_acreedora=False) + movimiento_neto_por_texto(df_raw, "701.04 Intereses a cargo bancario nacional", col_code, col_name, mov_debe, mov_haber, es_acreedora=False)
+    prod_fin_mes = movimiento_neto_por_texto(df_raw, "702.01 Utilidad cambiaria", col_code, col_name, mov_debe, mov_haber, es_acreedora=True)
 
     utilidad_neta_mes = utilidad_operacion_mes - gastos_fin_mes + prod_fin_mes
 
@@ -223,62 +260,55 @@ def procesar_archivo_bytes(content, filename):
         "Utilidad Neta": utilidad_neta_mes, "% Utilidad Neta": utilidad_neta_mes/ingresos_mes if ingresos_mes else 0
     }
 
-    # --- CÁLCULOS BALANCE (USANDO LISTA EXACTA DE CÓDIGOS DEL CATÁLOGO) ---
-    # Construimos listas exactas de códigos para cada rubro usando el catálogo detectado.
-    # Aquí puedes ajustar las reglas de selección: por ejemplo, incluir solo códigos que empiecen por '101' o incluir subcuentas específicas.
-    # Como pediste "lista exacta", tomamos los códigos exactos detectados en el catálogo que correspondan a cada familia.
-    def filtrar_codigos_por_prefijo_exacto(prefijos):
-        # devuelve lista de códigos exactos del catálogo que empiezan por alguno de los prefijos
-        res = []
-        for c in codigos_detectados:
-            for p in prefijos:
-                if str(c).startswith(str(p)):
-                    res.append(c)
-                    break
-        return res
+    # -------------------------
+    # BALANCE (USANDO LISTAS EXACTAS + MATCH POR NOMBRE PARA COMPLETAR)
+    # -------------------------
+    # Reglas para seleccionar códigos exactos: combinamos prefijos y keywords por nombre para asegurar cobertura.
+    # Ajusta keywords si tu catálogo usa nombres distintos.
+    codigos_efectivo = seleccionar_codigos_exactos(codigos_detectados, catalogo, prefijos=['101', '102'], keywords=['caja', 'efectivo', 'banco'])
+    codigos_cxc = seleccionar_codigos_exactos(codigos_detectados, catalogo, prefijos=['105'], keywords=['clientes', 'cuentas por cobrar'])
+    codigos_inventarios = seleccionar_codigos_exactos(codigos_detectados, catalogo, prefijos=['115'], keywords=['inventario', 'mercancías', 'mercancias'])
+    codigos_imp_recuperar = seleccionar_codigos_exactos(codigos_detectados, catalogo, prefijos=['113', '114', '118', '119'], keywords=['iva', 'pagos provisionales', 'iva acreditable', 'iva pendiente'])
+    codigos_otras_cxc = seleccionar_codigos_exactos(codigos_detectados, catalogo, prefijos=['107'], keywords=['otros deudores', 'deudores diversos', 'funcionarios', 'empleados'])
 
-    # Ejemplos de familias (ajusta si quieres otras agrupaciones)
-    codigos_efectivo = filtrar_codigos_por_prefijo_exacto(['101', '102'])
-    codigos_cxc = filtrar_codigos_por_prefijo_exacto(['105'])
-    codigos_inventarios = filtrar_codigos_por_prefijo_exacto(['115'])
-    codigos_imp_recuperar = filtrar_codigos_por_prefijo_exacto(['113', '114', '118', '119'])
-    codigos_otras_cxc = filtrar_codigos_por_prefijo_exacto(['107'])
-
-    efectivo = obtener_saldo_por_catalogo_exacto(df_raw, codigos_efectivo, col_code, col_debe, col_haber, es_acreedora=False)
-    cxc = obtener_saldo_por_catalogo_exacto(df_raw, codigos_cxc, col_code, col_debe, col_haber, es_acreedora=False)
-    inventarios = obtener_saldo_por_catalogo_exacto(df_raw, codigos_inventarios, col_code, col_debe, col_haber, es_acreedora=False)
-    imp_recuperar = obtener_saldo_por_catalogo_exacto(df_raw, codigos_imp_recuperar, col_code, col_debe, col_haber, es_acreedora=False)
-    otras_cxc = obtener_saldo_por_catalogo_exacto(df_raw, codigos_otras_cxc, col_code, col_debe, col_haber, es_acreedora=False)
+    efectivo = obtener_saldo_por_catalogo_exacto(df_raw, codigos_efectivo, col_code, sal_debe, sal_haber, es_acreedora=False)
+    cxc = obtener_saldo_por_catalogo_exacto(df_raw, codigos_cxc, col_code, sal_debe, sal_haber, es_acreedora=False)
+    inventarios = obtener_saldo_por_catalogo_exacto(df_raw, codigos_inventarios, col_code, sal_debe, sal_haber, es_acreedora=False)
+    imp_recuperar = obtener_saldo_por_catalogo_exacto(df_raw, codigos_imp_recuperar, col_code, sal_debe, sal_haber, es_acreedora=False)
+    otras_cxc = obtener_saldo_por_catalogo_exacto(df_raw, codigos_otras_cxc, col_code, sal_debe, sal_haber, es_acreedora=False)
 
     activo_circulante = efectivo + cxc + inventarios + imp_recuperar + otras_cxc
 
-    # Activo fijo: equipo de cómputo y transporte (tomamos códigos exactos detectados)
-    codigos_eq_computo = filtrar_codigos_por_prefijo_exacto(['154', '156'])
-    codigos_depreciacion = filtrar_codigos_por_prefijo_exacto(['171'])
+    # Activo fijo
+    codigos_eq_computo = seleccionar_codigos_exactos(codigos_detectados, catalogo, prefijos=['154', '156'], keywords=['equipo de cómputo', 'laptop', 'computo'])
+    codigos_depreciacion = seleccionar_codigos_exactos(codigos_detectados, catalogo, prefijos=['171'], keywords=['depreciacion', 'depreciación', 'depre'])
 
-    eq_computo = obtener_saldo_por_catalogo_exacto(df_raw, codigos_eq_computo, col_code, col_debe, col_haber, es_acreedora=False)
-    depreciacion = obtener_saldo_por_catalogo_exacto(df_raw, codigos_depreciacion, col_code, col_debe, col_haber, es_acreedora=False)
+    eq_computo = obtener_saldo_por_catalogo_exacto(df_raw, codigos_eq_computo, col_code, sal_debe, sal_haber, es_acreedora=False)
+    depreciacion = obtener_saldo_por_catalogo_exacto(df_raw, codigos_depreciacion, col_code, sal_debe, sal_haber, es_acreedora=False)
     activo_fijo = eq_computo + depreciacion
 
     total_activo = activo_circulante + activo_fijo
 
     # Pasivos
-    codigos_proveedores = filtrar_codigos_por_prefijo_exacto(['201'])
-    codigos_impuestos = filtrar_codigos_por_prefijo_exacto(['208', '209', '213', '216'])
-    codigos_otros_pasivos = filtrar_codigos_por_prefijo_exacto(['205', '206', '210'])
+    codigos_proveedores = seleccionar_codigos_exactos(codigos_detectados, catalogo, prefijos=['201'], keywords=['proveedores'])
+    codigos_impuestos = seleccionar_codigos_exactos(codigos_detectados, catalogo, prefijos=['208', '209', '213', '216'], keywords=['iva trasladado', 'iva por pagar', 'isr', 'retencion'])
+    codigos_otros_pasivos = seleccionar_codigos_exactos(codigos_detectados, catalogo, prefijos=['205', '206', '210'], keywords=['acreedores', 'anticipo', 'provision'])
 
-    proveedores = obtener_saldo_por_catalogo_exacto(df_raw, codigos_proveedores, col_code, col_debe, col_haber, es_acreedora=True)
-    imp_pagar = obtener_saldo_por_catalogo_exacto(df_raw, codigos_impuestos, col_code, col_debe, col_haber, es_acreedora=True)
-    otros_pasivos = obtener_saldo_por_catalogo_exacto(df_raw, codigos_otros_pasivos, col_code, col_debe, col_haber, es_acreedora=True)
+    proveedores = obtener_saldo_por_catalogo_exacto(df_raw, codigos_proveedores, col_code, sal_debe, sal_haber, es_acreedora=True)
+    imp_pagar = obtener_saldo_por_catalogo_exacto(df_raw, codigos_impuestos, col_code, sal_debe, sal_haber, es_acreedora=True)
+    otros_pasivos = obtener_saldo_por_catalogo_exacto(df_raw, codigos_otros_pasivos, col_code, sal_debe, sal_haber, es_acreedora=True)
 
     pasivo_circulante = proveedores + imp_pagar + otros_pasivos
 
-    # Capital contable: tomamos códigos 301 y 304 detectados
-    codigos_capital_social = filtrar_codigos_por_prefijo_exacto(['301'])
-    codigos_resultados_acum = filtrar_codigos_por_prefijo_exacto(['304'])
+    # Capital contable: 301 y 304 (resultados acumulados pueden incluir pérdidas 304.02)
+    codigos_capital_social = seleccionar_codigos_exactos(codigos_detectados, catalogo, prefijos=['301'], keywords=['capital'])
+    codigos_resultados_acum = seleccionar_codigos_exactos(codigos_detectados, catalogo, prefijos=['304'], keywords=['utilidad', 'pérdida', 'perdida', 'resultados acumulados'])
 
-    capital_social = obtener_saldo_por_catalogo_exacto(df_raw, codigos_capital_social, col_code, col_debe, col_haber, es_acreedora=True)
-    res_acumulados = obtener_saldo_por_catalogo_exacto(df_raw, codigos_resultados_acum, col_code, col_debe, col_haber, es_acreedora=True)
+    capital_social = obtener_saldo_por_catalogo_exacto(df_raw, codigos_capital_social, col_code, sal_debe, sal_haber, es_acreedora=True)
+    # Para resultados acumulados, sumar tanto utilidades como pérdidas (304.01 positivo, 304.02 negativo)
+    # obtenemos saldo como acreedora (haber - debe) y lo usamos directamente
+    res_acumulados = obtener_saldo_por_catalogo_exacto(df_raw, codigos_resultados_acum, col_code, sal_debe, sal_haber, es_acreedora=True)
+
     utilidad_ejercicio = utilidad_neta_acum
 
     capital_contable = capital_social + res_acumulados + utilidad_ejercicio
@@ -309,7 +339,7 @@ def procesar_archivo_bytes(content, filename):
 
     return data_acumulada, data_mensual, data_balance
 
-# ==================== APP DASH (sin cambios funcionales importantes) ====================
+# ==================== APP DASH (estructura original preservada) ====================
 server = Flask(__name__)
 app = Dash(__name__, server=server)
 
