@@ -85,7 +85,6 @@ def obtener_saldo_por_prefijos(df, prefijos, es_acreedora=False):
     total_haber = 0.0
     for i in range(len(df)):
         codigo = str(df.iat[i, 0]).strip()
-        # Filtramos solo filas de cuentas de detalle (ignora subtotales sin código)
         if pd.notna(df.iat[i, 0]) and codigo not in ['nan', 'None', '']:
             if any(codigo.startswith(p) for p in prefijos):
                 debe = df.iat[i, 6]
@@ -118,14 +117,14 @@ def procesar_archivo_bytes(content, filename):
     utilidad_neta_acum = utilidad_operacion_acum - gastos_fin_acum + prod_fin_acum
 
     data_acumulada = {
+        "Mes": mes_nombre, "Tipo_Reporte": "Acumulado",
         "Ingresos": ingresos_acum, "Costos": costos_acum, "% Costos": costos_acum/ingresos_acum if ingresos_acum else 0,
         "Utilidad Bruta": utilidad_bruta_acum, "% Utilidad Bruta": utilidad_bruta_acum/ingresos_acum if ingresos_acum else 0,
         "Gastos Generales": gastos_gen_acum, "% Gastos Gen.": gastos_gen_acum/ingresos_acum if ingresos_acum else 0,
         "Utilidad Operación": utilidad_operacion_acum, "% Util. Operación": utilidad_operacion_acum/ingresos_acum if ingresos_acum else 0,
         "Gastos Financieros": gastos_fin_acum, "% Gastos Fin.": gastos_fin_acum/ingresos_acum if ingresos_acum else 0,
         "Productos Financieros": prod_fin_acum, "% Prod. Fin.": prod_fin_acum/ingresos_acum if ingresos_acum else 0,
-        "Utilidad Neta": utilidad_neta_acum, "% Utilidad Neta": utilidad_neta_acum/ingresos_acum if ingresos_acum else 0,
-        "Mes": mes_nombre, "Tipo_Reporte": "Acumulado"
+        "Utilidad Neta": utilidad_neta_acum, "% Utilidad Neta": utilidad_neta_acum/ingresos_acum if ingresos_acum else 0
     }
 
     # ==========================================
@@ -144,20 +143,19 @@ def procesar_archivo_bytes(content, filename):
     utilidad_neta_mes = utilidad_operacion_mes - gastos_fin_mes + prod_fin_mes
 
     data_mensual = {
+        "Mes": mes_nombre, "Tipo_Reporte": "Mensual",
         "Ingresos": ingresos_mes, "Costos": costos_mes, "% Costos": costos_mes/ingresos_mes if ingresos_mes else 0,
         "Utilidad Bruta": utilidad_bruta_mes, "% Utilidad Bruta": utilidad_bruta_mes/ingresos_mes if ingresos_mes else 0,
         "Gastos Generales": gastos_gen_mes, "% Gastos Gen.": gastos_gen_mes/ingresos_mes if ingresos_mes else 0,
         "Utilidad Operación": utilidad_operacion_mes, "% Util. Operación": utilidad_operacion_mes/ingresos_mes if ingresos_mes else 0,
         "Gastos Financieros": gastos_fin_mes, "% Gastos Fin.": gastos_fin_mes/ingresos_mes if ingresos_mes else 0,
         "Productos Financieros": prod_fin_mes, "% Prod. Fin.": prod_fin_mes/ingresos_mes if ingresos_mes else 0,
-        "Utilidad Neta": utilidad_neta_mes, "% Utilidad Neta": utilidad_neta_mes/ingresos_mes if ingresos_mes else 0,
-        "Mes": mes_nombre, "Tipo_Reporte": "Mensual"
+        "Utilidad Neta": utilidad_neta_mes, "% Utilidad Neta": utilidad_neta_mes/ingresos_mes if ingresos_mes else 0
     }
 
     # ==========================================
     # 3. CÁLCULO BALANCE GENERAL (POSICIÓN FINANCIERA)
     # ==========================================
-    # Activos
     efectivo = obtener_saldo_por_prefijos(df, ['101', '102'])
     cxc = obtener_saldo_por_prefijos(df, ['105'])
     inventarios = obtener_saldo_por_prefijos(df, ['115'])
@@ -166,49 +164,43 @@ def procesar_archivo_bytes(content, filename):
     activo_circulante = efectivo + cxc + inventarios + imp_recuperar + otras_cxc
     
     eq_computo = obtener_saldo_por_prefijos(df, ['154', '156'])
-    depreciacion = obtener_saldo_por_prefijos(df, ['171']) # Naturalmente negativo
+    depreciacion = obtener_saldo_por_prefijos(df, ['171']) 
     activo_fijo = eq_computo + depreciacion
     total_activo = activo_circulante + activo_fijo
 
-    # Pasivos
     proveedores = obtener_saldo_por_prefijos(df, ['201'], es_acreedora=True)
     imp_pagar = obtener_saldo_por_prefijos(df, ['208', '209', '213', '216'], es_acreedora=True)
     otros_pasivos = obtener_saldo_por_prefijos(df, ['205', '206', '210'], es_acreedora=True)
     pasivo_circulante = proveedores + imp_pagar + otros_pasivos
     
-    # Capital
     capital_social = obtener_saldo_por_prefijos(df, ['301'], es_acreedora=True)
     res_acumulados = obtener_saldo_por_prefijos(df, ['304'], es_acreedora=True)
-    utilidad_ejercicio = utilidad_neta_acum # Conexión vital entre Balance y Estado de Resultados
+    utilidad_ejercicio = utilidad_neta_acum 
     
     capital_contable = capital_social + res_acumulados + utilidad_ejercicio
     total_pasivo_capital = pasivo_circulante + capital_contable
 
     data_balance = {
+        "Mes": mes_nombre, "Tipo_Reporte": "Balance",
         "Efectivo": efectivo, "% Efectivo": efectivo/total_activo if total_activo else 0,
         "Cuentas por Cobrar": cxc, "% Cuentas x Cobrar": cxc/total_activo if total_activo else 0,
         "Inventarios": inventarios, "% Inventarios": inventarios/total_activo if total_activo else 0,
         "Impuestos por Recuperar": imp_recuperar, "% Imp. Recuperar": imp_recuperar/total_activo if total_activo else 0,
         "Otras Cuentas x Cobrar": otras_cxc, "% Otras CxC": otras_cxc/total_activo if total_activo else 0,
         "Total Activo Circulante": activo_circulante, "% Act. Circulante": activo_circulante/total_activo if total_activo else 0,
-        
         "Equipo de Cómputo": eq_computo,
         "Depreciación Acumulada": depreciacion,
         "Total Activo Fijo": activo_fijo, "% Act. Fijo": activo_fijo/total_activo if total_activo else 0,
         "Total Activo": total_activo,
-        
         "Proveedores": proveedores, "% Proveedores": proveedores/total_pasivo_capital if total_pasivo_capital else 0,
         "Impuestos por Pagar": imp_pagar, "% Imp. Pagar": imp_pagar/total_pasivo_capital if total_pasivo_capital else 0,
         "Otros Pasivos": otros_pasivos, "% Otros Pasivos": otros_pasivos/total_pasivo_capital if total_pasivo_capital else 0,
         "Total Pasivo": pasivo_circulante, "% Total Pasivo": pasivo_circulante/total_pasivo_capital if total_pasivo_capital else 0,
-        
         "Capital Social": capital_social,
         "Resultados Acumulados": res_acumulados,
         "Utilidad del Ejercicio": utilidad_ejercicio,
         "Total Capital": capital_contable, "% Total Capital": capital_contable/total_pasivo_capital if total_pasivo_capital else 0,
-        "Total Pasivo y Capital": total_pasivo_capital,
-        
-        "Mes": mes_nombre, "Tipo_Reporte": "Balance"
+        "Total Pasivo y Capital": total_pasivo_capital
     }
 
     return data_acumulada, data_mensual, data_balance
@@ -275,7 +267,7 @@ app.layout = html.Div([
 
     html.Div(id='upload-status', style={'padding': '0 15px', 'fontWeight': '600', 'color': '#1E293B'}),
 
-    # FILTROS Y CONTROLES (SE ACTUALIZAN SEGÚN PESTAÑA)
+    # FILTROS Y CONTROLES
     html.Div([
         html.Div([
             html.Label('Filtrar por Mes', style={'fontWeight': '600', 'color': '#1E293B', 'marginBottom': '6px', 'display': 'block'}), 
@@ -295,7 +287,7 @@ app.layout = html.Div([
         ], style={'width':'23%','display':'inline-block'})
     ], style={'margin': '15px', 'padding': '20px', 'background': '#FFFFFF', 'borderRadius': '12px', 'boxShadow': '0 1px 3px rgba(0,0,0,0.05)'}),
 
-    # PESTAÑAS - AHORA SON 3
+    # PESTAÑAS 
     dcc.Tabs(id='report-tab', value='acumulado', children=[
         dcc.Tab(label='Estado de Resultados Acumulado', value='acumulado', style=estilo_tab, selected_style=estilo_tab_seleccionada),
         dcc.Tab(label='Estado de Resultados Mensual', value='mensual', style=estilo_tab, selected_style=estilo_tab_seleccionada),
@@ -327,7 +319,6 @@ app.layout = html.Div([
 
 # ---------------------- CALLBACKS ----------------------
 
-# 1. Carga inicial en el Store
 @app.callback(
     Output('df-store', 'data'),
     Output('upload-status', 'children'),
@@ -350,13 +341,22 @@ def handle_upload(upload_contents, upload_names):
             return None, html.Div(f"Error procesando {name}: {e}", style={'color': '#EF4444'}), []
 
     df = pd.DataFrame(resultados)
+    
+    # REORDENAMIENTO MAESTRO: Forzamos a que 'Mes' siempre quede al inicio de todo el DataFrame globalmente
+    cols = df.columns.tolist()
+    if 'Mes' in cols:
+        cols.insert(0, cols.pop(cols.index('Mes')))
+    if 'Tipo_Reporte' in cols:
+        cols.insert(0, cols.pop(cols.index('Tipo_Reporte'))) # Es interno, se ocultará, pero se queda junto a Mes
+    df = df[cols]
+    
     meses_unicos = sorted(df['Mes'].unique(), key=obtener_clave_orden)
     mes_options = [{'label': m, 'value': m} for m in meses_unicos]
     
-    status_msg = html.Div(f'✓ {len(valid_files)} archivos procesados con éxito (Se calcularon E.R. Acumulado, E.R. Mensual y Balance General).', style={'color': '#10B981', 'padding': '10px 0'})
+    status_msg = html.Div(f'✓ {len(valid_files)} archivos procesados con éxito.', style={'color': '#10B981', 'padding': '10px 0'})
     return df.to_json(date_format='iso', orient='split'), status_msg, mes_options
 
-# 2. Actualización dinámica de filtros según la pestaña activa
+
 @app.callback(
     Output('metric-dropdown', 'options'),
     Output('metric-dropdown', 'value'),
@@ -376,19 +376,17 @@ def update_controls(df_json, tab):
     filtro_tipo = "Balance" if tab == "balance" else ("Acumulado" if tab == "acumulado" else "Mensual")
     df = df[df['Tipo_Reporte'] == filtro_tipo]
     
-    # Eliminamos columnas que queden totalmente vacías (por cruce entre Balance y ER)
     df = df.dropna(axis=1, how='all')
     columnas_disponibles = [c for c in df.columns if c not in ['Mes', 'Tipo_Reporte']]
     
     metric_options = [{'label': m, 'value': m} for m in columnas_disponibles]
     col_options = [{'label': c, 'value': c} for c in columnas_disponibles]
     
-    # Metrica por defecto inteligente
     default_metric = "Total Activo" if tab == "balance" else ("Utilidad Neta" if "Utilidad Neta" in columnas_disponibles else columnas_disponibles[0])
     
     return metric_options, default_metric, col_options, []
 
-# 3. Renderizado de la tabla y gráfico
+
 @app.callback(
     Output('main-table', 'columns'),
     Output('main-table', 'data'),
@@ -409,7 +407,6 @@ def update_views(df_json, tab, metric, chart_type, meses, cols_seleccionadas, so
     except:
         df = pd.read_json(df_json, orient='split')
     
-    # Filtrar por Tipo de Reporte (Pestaña)
     filtro_tipo = "Balance" if tab == "balance" else ("Acumulado" if tab == "acumulado" else "Mensual")
     df = df[df['Tipo_Reporte'] == filtro_tipo].dropna(axis=1, how='all')
     df = df.drop('Tipo_Reporte', axis=1, errors='ignore')
@@ -419,7 +416,6 @@ def update_views(df_json, tab, metric, chart_type, meses, cols_seleccionadas, so
         
     if df.empty: return [], [], html.Div('Sin datos con los filtros actuales.', style={'color': '#EF4444', 'textAlign': 'center'})
     
-    # Ordenamiento Cronológico
     df['_sort_key'] = df['Mes'].apply(obtener_clave_orden)
     if sort_by and len(sort_by) > 0:
         col = sort_by[0]['column_id']
@@ -429,11 +425,16 @@ def update_views(df_json, tab, metric, chart_type, meses, cols_seleccionadas, so
         df = df.sort_values('_sort_key', ascending=True)
     df = df.drop('_sort_key', axis=1)
 
+    # AQUÍ ASEGURAMOS QUE MES SE MANTENGA A LA IZQUIERDA EN LA VISTA FINAL
     display_df = df.copy()
     if cols_seleccionadas:
         display_df = display_df[['Mes'] + cols_seleccionadas]
+    else:
+        cols_finales = display_df.columns.tolist()
+        if 'Mes' in cols_finales:
+            cols_finales.insert(0, cols_finales.pop(cols_finales.index('Mes')))
+        display_df = display_df[cols_finales]
 
-    # Formateo de Tabla
     columns_table = []
     for c in display_df.columns:
         if c == "Mes":
@@ -443,7 +444,6 @@ def update_views(df_json, tab, metric, chart_type, meses, cols_seleccionadas, so
         else:
             columns_table.append({"name": c, "id": c, "type": "numeric", "format": Format(precision=2, scheme=Scheme.fixed, group=Group.yes, symbol=Symbol.yes)})
 
-    # Construcción de Gráfico
     fig = None
     if metric and metric in df.columns and not df.empty:
         df_graph = df.sort_values(by='Mes', key=lambda x: x.apply(obtener_clave_orden))
