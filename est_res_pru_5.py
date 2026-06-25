@@ -22,7 +22,7 @@ def encode_image(path):
 
 logo_base64 = encode_image(PATH_DEL_LOGO)
 
-# ==================== DICCIONARIO DE MESES (SOLUCIÓN ORDEN) ====================
+# ==================== DICCIONARIO DE MESES (ORDEN CRONOLÓGICO) ====================
 MESES_ORDEN = {
     'ENERO': 1, 'FEBRERO': 2, 'MARZO': 3, 'ABRIL': 4, 
     'MAYO': 5, 'JUNIO': 6, 'JULIO': 7, 'AGOSTO': 8, 
@@ -37,7 +37,9 @@ def obtener_clave_orden(mes_str):
     return (0, 0)
 
 
-# ---------------------- LÓGICA DE PROCESAMIENTO ----------------------
+# ---------------------- LÓGICA DE PROCESAMIENTO CONTABLE ----------------------
+
+# --- Lógica 1: Para Reporte Acumulado (Lee saldos finales) ---
 def obtener_valor(df, cuenta, columna):
     for i in range(len(df)):
         valor_cuenta = str(df.iat[i, 1]).strip()
@@ -59,64 +61,98 @@ def obtener_704_04(df, columna):
             return float(valor)
     return 0.0
 
-def calcular_metricas_por_columnas(df, col_debe, col_haber, filename):
-    ingresos = obtener_valor(df, "4 Ingresos", col_haber) + obtener_704_04(df, col_haber)
-    costos = obtener_valor(df, "5 Costos", col_debe)
-    gastos_generales = (
-        obtener_valor(df, "6 Gastos generales", col_debe)
-        + obtener_valor(df, "701.10 Comisiones bancarias", col_debe)
-    )
-    utilidad_bruta = ingresos - costos
-    utilidad_operacion = utilidad_bruta - gastos_generales
-    gastos_financieros = (
-        obtener_valor(df, "701.01 Pérdida cambiaria", col_debe)
-        + obtener_valor(df, "701.04 Intereses a cargo bancario nacional", col_debe)
-    )
-    productos_financieros = obtener_valor(df, "702.01 Utilidad cambiaria", col_haber)
-    utilidad_neta = utilidad_operacion - gastos_financieros + productos_financieros
+# --- Lógica 2: Para Reporte Mensual (Calcula Movimiento Neto del Mes) ---
+def obtener_movimiento_neto(df, cuenta, es_acreedora=False):
+    """Calcula el movimiento neto mensual restando cargos (col 4) y abonos (col 5)"""
+    for i in range(len(df)):
+        valor_cuenta = str(df.iat[i, 1]).strip()
+        if valor_cuenta.lower() == cuenta.lower():
+            cargo_col4 = df.iat[i, 4] if not pd.isna(df.iat[i, 4]) else 0.0
+            abono_col5 = df.iat[i, 5] if not pd.isna(df.iat[i, 5]) else 0.0
+            
+            if es_acreedora:
+                # Ingresos: Abonos menos Cargos (Devoluciones/Descuentos)
+                return float(abono_col5) - float(cargo_col4)
+            else:
+                # Gastos/Costos: Cargos menos Abonos (Cancelaciones/Ajustes)
+                return float(cargo_col4) - float(abono_col5)
+    return 0.0
 
-    if ingresos > 0:
-        p_costos = costos / ingresos
-        p_ubruta = utilidad_bruta / ingresos
-        p_ggen = gastos_generales / ingresos
-        p_uoper = utilidad_operacion / ingresos
-        p_gfin = gastos_financieros / ingresos
-        p_pfin = productos_financieros / ingresos
-        p_uneta = utilidad_neta / ingresos
-    else:
-        p_costos = p_ubruta = p_ggen = p_uoper = p_gfin = p_pfin = p_uneta = 0.0
+def obtener_704_04_neto(df, es_acreedora=False):
+    texto_busqueda = "704.04"
+    for i in range(len(df)):
+        valor_cuenta = str(df.iat[i, 1]).strip()
+        if texto_busqueda in valor_cuenta:
+            cargo_col4 = df.iat[i, 4] if not pd.isna(df.iat[i, 4]) else 0.0
+            abono_col5 = df.iat[i, 5] if not pd.isna(df.iat[i, 5]) else 0.0
+            
+            if es_acreedora:
+                return float(abono_col5) - float(cargo_col4)
+            else:
+                return float(cargo_col4) - float(abono_col5)
+    return 0.0
 
-    return {
-        "Ingresos": ingresos,
-        "Costos": costos,
-        "% Costos": p_costos,
-        "Utilidad Bruta": utilidad_bruta,
-        "% Utilidad Bruta": p_ubruta,
-        "Gastos Generales": gastos_generales,
-        "% Gastos Gen.": p_ggen,
-        "Utilidad Operación": utilidad_operacion,
-        "% Util. Operación": p_uoper,
-        "Gastos Financieros": gastos_financieros,
-        "% Gastos Fin.": p_gfin,
-        "Productos Financieros": productos_financieros,
-        "% Prod. Fin.": p_pfin,
-        "Utilidad Neta": utilidad_neta,
-        "% Utilidad Neta": p_uneta,
-        "Mes": os.path.splitext(os.path.basename(filename))[0]
-    }
-
+# --- Procesador Principal del Excel ---
 def procesar_archivo_bytes(content, filename):
     header, encoded = content.split(",", 1)
     data = base64.b64decode(encoded)
     df = pd.read_excel(io.BytesIO(data), header=None)
+    
+    mes_nombre = os.path.splitext(os.path.basename(filename))[0]
 
-    # Cálculo Acumulado (Columnas de Saldos Finales: Debe=6, Haber=7)
-    data_acumulada = calcular_metricas_por_columnas(df, col_debe=6, col_haber=7, filename=filename)
-    data_acumulada["Tipo_Reporte"] = "Acumulado"
+    # ==========================================
+    # 1. CÁLCULO ACUMULADO (Saldos Finales: Col 6 y 7)
+    # ==========================================
+    ingresos_acum = obtener_valor(df, "4 Ingresos", 7) + obtener_704_04(df, 7)
+    costos_acum = obtener_valor(df, "5 Costos", 6)
+    gastos_gen_acum = obtener_valor(df, "6 Gastos generales", 6) + obtener_valor(df, "701.10 Comisiones bancarias", 6)
+    
+    utilidad_bruta_acum = ingresos_acum - costos_acum
+    utilidad_operacion_acum = utilidad_bruta_acum - gastos_gen_acum
+    
+    gastos_fin_acum = obtener_valor(df, "701.01 Pérdida cambiaria", 6) + obtener_valor(df, "701.04 Intereses a cargo bancario nacional", 6)
+    prod_fin_acum = obtener_valor(df, "702.01 Utilidad cambiaria", 7)
+    
+    utilidad_neta_acum = utilidad_operacion_acum - gastos_fin_acum + prod_fin_acum
 
-    # Cálculo Mensual (Columnas de Movimientos del Mes: Debe=4, Haber=5)
-    data_mensual = calcular_metricas_por_columnas(df, col_debe=4, col_haber=5, filename=filename)
-    data_mensual["Tipo_Reporte"] = "Mensual"
+    data_acumulada = {
+        "Ingresos": ingresos_acum, "Costos": costos_acum, "% Costos": costos_acum/ingresos_acum if ingresos_acum else 0,
+        "Utilidad Bruta": utilidad_bruta_acum, "% Utilidad Bruta": utilidad_bruta_acum/ingresos_acum if ingresos_acum else 0,
+        "Gastos Generales": gastos_gen_acum, "% Gastos Gen.": gastos_gen_acum/ingresos_acum if ingresos_acum else 0,
+        "Utilidad Operación": utilidad_operacion_acum, "% Util. Operación": utilidad_operacion_acum/ingresos_acum if ingresos_acum else 0,
+        "Gastos Financieros": gastos_fin_acum, "% Gastos Fin.": gastos_fin_acum/ingresos_acum if ingresos_acum else 0,
+        "Productos Financieros": prod_fin_acum, "% Prod. Fin.": prod_fin_acum/ingresos_acum if ingresos_acum else 0,
+        "Utilidad Neta": utilidad_neta_acum, "% Utilidad Neta": utilidad_neta_acum/ingresos_acum if ingresos_acum else 0,
+        "Mes": mes_nombre,
+        "Tipo_Reporte": "Acumulado"
+    }
+
+    # ==========================================
+    # 2. CÁLCULO MENSUAL (Movimientos Netos: Col 4 y 5)
+    # ==========================================
+    ingresos_mes = obtener_movimiento_neto(df, "4 Ingresos", es_acreedora=True) + obtener_704_04_neto(df, es_acreedora=True)
+    costos_mes = obtener_movimiento_neto(df, "5 Costos", es_acreedora=False)
+    gastos_gen_mes = obtener_movimiento_neto(df, "6 Gastos generales", es_acreedora=False) + obtener_movimiento_neto(df, "701.10 Comisiones bancarias", es_acreedora=False)
+    
+    utilidad_bruta_mes = ingresos_mes - costos_mes
+    utilidad_operacion_mes = utilidad_bruta_mes - gastos_gen_mes
+    
+    gastos_fin_mes = obtener_movimiento_neto(df, "701.01 Pérdida cambiaria", es_acreedora=False) + obtener_movimiento_neto(df, "701.04 Intereses a cargo bancario nacional", es_acreedora=False)
+    prod_fin_mes = obtener_movimiento_neto(df, "702.01 Utilidad cambiaria", es_acreedora=True)
+    
+    utilidad_neta_mes = utilidad_operacion_mes - gastos_fin_mes + prod_fin_mes
+
+    data_mensual = {
+        "Ingresos": ingresos_mes, "Costos": costos_mes, "% Costos": costos_mes/ingresos_mes if ingresos_mes else 0,
+        "Utilidad Bruta": utilidad_bruta_mes, "% Utilidad Bruta": utilidad_bruta_mes/ingresos_mes if ingresos_mes else 0,
+        "Gastos Generales": gastos_gen_mes, "% Gastos Gen.": gastos_gen_mes/ingresos_mes if ingresos_mes else 0,
+        "Utilidad Operación": utilidad_operacion_mes, "% Util. Operación": utilidad_operacion_mes/ingresos_mes if ingresos_mes else 0,
+        "Gastos Financieros": gastos_fin_mes, "% Gastos Fin.": gastos_fin_mes/ingresos_mes if ingresos_mes else 0,
+        "Productos Financieros": prod_fin_mes, "% Prod. Fin.": prod_fin_mes/ingresos_mes if ingresos_mes else 0,
+        "Utilidad Neta": utilidad_neta_mes, "% Utilidad Neta": utilidad_neta_mes/ingresos_mes if ingresos_mes else 0,
+        "Mes": mes_nombre,
+        "Tipo_Reporte": "Mensual"
+    }
 
     return data_acumulada, data_mensual
 
@@ -247,7 +283,7 @@ app.layout = html.Div([
 
     html.Div(id='upload-status', style={'padding': '0 15px', 'fontWeight': '600', 'color': '#1E293B'}),
 
-    # FILTROS Y CONTROLES
+    # FILTROS Y CONTROLES GLOBALES
     html.Div([
         html.Div([
             html.Label('Filtrar por Mes', style={'fontWeight': '600', 'color': '#1E293B', 'marginBottom': '6px', 'display': 'block'}), 
@@ -356,7 +392,7 @@ def update_store(upload_contents, upload_names):
 
     df = pd.DataFrame(resultados)
     
-    # Reordenamiento de columnas base excluyendo las de control interno
+    # Reordenamiento de columnas (excluyendo Tipo_Reporte del frontend directo)
     columnas_base = [c for c in df.columns if c not in ['Mes', 'Tipo_Reporte']]
     columnas_ordenadas = ['Tipo_Reporte', 'Mes'] + columnas_base
     df = df[columnas_ordenadas]
@@ -368,7 +404,7 @@ def update_store(upload_contents, upload_names):
     
     col_options = [{'label': c, 'value': c} for c in columnas_base]
     
-    status_msg = html.Div(f'✓ {len(df) // 2} períodos mensuales cargados (Métricas Mensuales y Acumuladas calculadas con éxito).', style={'color': '#10B981', 'padding': '10px 0'})
+    status_msg = html.Div(f'✓ {len(df) // 2} archivos procesados con éxito (Se calcularon métricas Acumuladas y Mensuales).', style={'color': '#10B981', 'padding': '10px 0'})
     return df.to_json(date_format='iso', orient='split'), status_msg, metric_options, ('Utilidad Neta' if 'Utilidad Neta' in columnas_base else columnas_base[0]), mes_options, col_options
 
 
@@ -377,7 +413,7 @@ def update_store(upload_contents, upload_names):
     Output('main-table', 'data'),
     Output('graph-container', 'children'),
     Input('df-store', 'data'),
-    Input('report-tab', 'value'),
+    Input('report-tab', 'value'), # Entrada para saber en qué pestaña estamos
     Input('metric-dropdown', 'value'),
     Input('chart-type', 'value'),
     Input('mes-filter', 'value'),
@@ -393,19 +429,19 @@ def update_views(df_json, tab_seleccionado, metric, chart_type, meses_selecciona
     except ValueError:
         df = pd.read_json(df_json, orient='split')
     
-    # FILTRO 1: Separar por la pestaña seleccionada (Acumulado vs Mensual)
+    # --- APLICACIÓN DE FILTRO POR PESTAÑA ---
     filtro_tipo = "Acumulado" if tab_seleccionado == "acumulado" else "Mensual"
     df = df[df['Tipo_Reporte'] == filtro_tipo]
-    df = df.drop('Tipo_Reporte', axis=1) # Removemos columna interna para no saturar la vista
+    df = df.drop('Tipo_Reporte', axis=1)
     
-    # FILTRO 2: Filtrado por mes si se especifica
+    # Aplicación de filtros de UI
     if meses_seleccionados and len(meses_seleccionados) > 0:
         df = df[df['Mes'].isin(meses_seleccionados)]
     
     if df.empty:
         return [], [], html.Div('Sin datos coincidentes con los filtros aplicados.', style={'color': '#EF4444', 'textAlign': 'center', 'padding': '20px'})
     
-    # Aplicar clave oculta para ordenamiento inteligente
+    # Ordenamiento
     df['_sort_key'] = df['Mes'].apply(obtener_clave_orden)
     
     if sort_by and len(sort_by) > 0:
@@ -422,11 +458,13 @@ def update_views(df_json, tab_seleccionado, metric, chart_type, meses_selecciona
 
     df = df.drop('_sort_key', axis=1)
 
+    # Selección de columnas
     display_df = df.copy()
     if columnas_seleccionadas and len(columnas_seleccionadas) > 0:
         columnas_a_mostrar = ['Mes'] + columnas_seleccionadas
         display_df = display_df[columnas_a_mostrar]
 
+    # Formateo de columnas para Dash Table
     columns_table = []
     for c in display_df.columns:
         if c == "Mes":
@@ -442,7 +480,7 @@ def update_views(df_json, tab_seleccionado, metric, chart_type, meses_selecciona
                 "format": Format(precision=2, scheme=Scheme.fixed, group=Group.yes, symbol=Symbol.yes)
             })
 
-    # GRÁFICA
+    # Gráfica
     fig = None
     if metric and metric in df.columns and not df.empty:
         df_graph = df.sort_values(by='Mes', key=lambda col: col.apply(obtener_clave_orden))
