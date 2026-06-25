@@ -7,7 +7,9 @@ from dash import Dash, dcc, html, Input, Output, State, dash_table
 from dash.dash_table.Format import Format, Scheme, Group, Symbol
 import plotly.graph_objs as go
 
-# ==================== CONFIG DEL LOGO ====================
+print("Iniciando servidor Dash para el dashboard web")
+
+# ==================== CONFIGURACIÓN DEL LOGO ====================
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 PATH_DEL_LOGO = os.path.join(BASE_DIR, "logo.png")
 
@@ -20,7 +22,7 @@ def encode_image(path):
 
 logo_base64 = encode_image(PATH_DEL_LOGO)
 
-# ==================== DICCIONARIO DE MESES ====================
+# ==================== DICCIONARIO DE MESES (ORDEN CRONOLÓGICO) ====================
 MESES_ORDEN = {
     'ENERO': 1, 'FEBRERO': 2, 'MARZO': 3, 'ABRIL': 4,
     'MAYO': 5, 'JUNIO': 6, 'JULIO': 7, 'AGOSTO': 8,
@@ -34,14 +36,12 @@ def obtener_clave_orden(mes_str):
         return (int(año), MESES_ORDEN.get(mes.upper(), 0))
     return (0, 0)
 
-# ==================== DETECCIÓN DE ENCABEZADO Y COLUMNAS ====================
+# ==================== UTILIDADES: DETECCIÓN DE ENCABEZADO Y COLUMNAS ====================
 def detectar_encabezado_y_columnas(df):
     """
-    Detecta la fila de encabezado (si existe) y devuelve:
-    header_row_idx, col_code, col_name, movimiento_debe, movimiento_haber, saldo_debe, saldo_haber
-    - movimiento_debe/haber: columnas de cargo/abono (movimiento mensual) (ej. columnas 4/5 en tu archivo original)
-    - saldo_debe/haber: columnas de saldo final (ej. columnas 6/7 en tu archivo original)
-    Si no encuentra, aplica heurísticas y valores por defecto.
+    Detecta fila de encabezado (si existe) y devuelve:
+    header_row_idx, col_code, col_name, mov_debe, mov_haber, sal_debe, sal_haber
+    Heurísticas revisan primeras 12 filas; si no encuentra, aplica índices por defecto.
     """
     col_code = col_name = None
     mov_debe = mov_haber = None
@@ -61,7 +61,6 @@ def detectar_encabezado_y_columnas(df):
                 if "nombre" in cell and "cuenta" in cell:
                     col_name = c
                 if cell in ["cargo", "cargos", "cargo (debe)", "debe", "débito", "debito"]:
-                    # si no hay mov_debe asignado, asignar como movimiento; si ya hay, asignar como saldo
                     if mov_debe is None:
                         mov_debe = c
                     elif sal_debe is None:
@@ -73,26 +72,22 @@ def detectar_encabezado_y_columnas(df):
                         sal_haber = c
             break
 
-    # Si no se detectó encabezado, heurística por contenido
+    # Heurística por contenido si no detectó encabezado
     if col_code is None or col_name is None:
         for c in range(df.shape[1]):
             sample = " ".join([str(x) for x in df.iloc[:8, c].fillna("").astype(str).tolist()]).lower()
-            # detectar columna de códigos por patrón numérico con puntos
             if any(part.strip().replace('.', '').isdigit() and len(part.strip()) >= 3 for part in sample.split()):
                 if col_code is None:
                     col_code = c
-            # detectar columna de nombres por presencia de palabras 'clientes', 'proveedores', 'iva', 'inventario'
-            if any(k in sample for k in ['clientes', 'proveedores', 'iva', 'inventario', 'caja', 'efectivo']):
+            if any(k in sample for k in ['clientes', 'proveedores', 'iva', 'inventario', 'caja', 'efectivo', 'ventas']):
                 if col_name is None and c != col_code:
                     col_name = c
 
-    # Si no detectó columnas de movimiento/saldo, usar posiciones por defecto (basadas en tu archivo original)
+    # Valores por defecto si faltan (compatibles con tu archivo original)
     if mov_debe is None: mov_debe = 4
     if mov_haber is None: mov_haber = 5
     if sal_debe is None: sal_debe = 6
     if sal_haber is None: sal_haber = 7
-
-    # Valores por defecto mínimos
     if col_code is None: col_code = 0
     if col_name is None: col_name = 1
 
@@ -101,8 +96,8 @@ def detectar_encabezado_y_columnas(df):
 # ==================== CONSTRUCCIÓN DEL CATÁLOGO (CÓDIGOS EXACTOS) ====================
 def construir_catalogo(df, col_code, col_name):
     """
-    Construye diccionario {codigo: nombre} y lista ordenada de códigos detectados.
-    Solo incluye filas con código no vacío.
+    Recorre df y construye diccionario {codigo: nombre} con filas que tengan código no vacío.
+    Devuelve además la lista ordenada de códigos detectados.
     """
     catalogo = {}
     for i in range(len(df)):
@@ -115,12 +110,12 @@ def construir_catalogo(df, col_code, col_name):
     codigos = sorted(catalogo.keys())
     return catalogo, codigos
 
-# ==================== SELECCIÓN DE CÓDIGOS (EXACTOS) CON COMPLEMENTO POR NOMBRE ====================
+# ==================== SELECCIÓN DE CÓDIGOS EXACTOS (POR PREFIJO Y/O KEYWORDS) ====================
 def seleccionar_codigos_exactos(codigos_detectados, catalogo, prefijos=None, keywords=None):
     """
     Devuelve lista de códigos exactos que:
-    - pertenecen a los prefijos (si se pasa prefijos) OR
-    - cuyo nombre contiene alguna keyword (si se pasa keywords)
+    - empiezan por alguno de los prefijos (si se pasa prefijos)
+    - o cuyo nombre contiene alguna keyword (si se pasa keywords)
     Combina ambas reglas para asegurar cobertura.
     """
     res = set()
@@ -168,7 +163,7 @@ def obtener_saldo_por_catalogo_exacto(df, lista_codigos, col_code, col_debe, col
 # ==================== BÚSQUEDAS POR TEXTO (para filas de ingresos/costos/gastos) ====================
 def buscar_valor_por_texto(df, texto, col_code, col_name, col_val):
     """
-    Busca coincidencia exacta en código o coincidencia en nombre (case-insensitive).
+    Busca coincidencia exacta en código o coincidencia parcial en nombre (case-insensitive).
     Devuelve el valor en la columna col_val (ej. saldo final).
     """
     buscado_l = str(texto).strip().lower()
@@ -196,20 +191,24 @@ def procesar_archivo_bytes(content, filename):
     header, encoded = content.split(",", 1)
     data = base64.b64decode(encoded)
     df_raw = pd.read_excel(io.BytesIO(data), header=None, dtype=object)
-
     mes_nombre = os.path.splitext(os.path.basename(filename))[0]
 
-    # Detectar encabezado y columnas (movimiento y saldo)
+    # Detectar encabezado y columnas
     header_row_idx, col_code, col_name, mov_debe, mov_haber, sal_debe, sal_haber = detectar_encabezado_y_columnas(df_raw)
 
     # Construir catálogo de cuentas (lista exacta de códigos)
     catalogo, codigos_detectados = construir_catalogo(df_raw, col_code, col_name)
     if not codigos_detectados:
-        # heurística alternativa si no detectó nada
         catalogo, codigos_detectados = construir_catalogo(df_raw, 0, 1)
 
+    # Depuración: imprimir índices y muestra de catálogo (puedes comentar en producción)
+    print(f"[{mes_nombre}] header_row_idx={header_row_idx}, col_code={col_code}, col_name={col_name}, mov_debe={mov_debe}, mov_haber={mov_haber}, sal_debe={sal_debe}, sal_haber={sal_haber}")
+    print(f"[{mes_nombre}] códigos detectados (muestra 40): {codigos_detectados[:40]}")
+    # También puedes descomentar para ver nombres:
+    # print(f"[{mes_nombre}] catálogo muestra: {{k: catalogo[k] for k in list(catalogo)[:40]}}")
+
     # -------------------------
-    # ESTADO DE RESULTADOS ACUMULADO (usa columnas de saldo final)
+    # 1. ESTADO DE RESULTADOS ACUMULADO (usa columnas de saldo final)
     # -------------------------
     ingresos_acum = buscar_valor_por_texto(df_raw, "4 Ingresos", col_code, col_name, sal_haber) + buscar_valor_por_texto(df_raw, "704.04", col_code, col_name, sal_haber)
     costos_acum = buscar_valor_por_texto(df_raw, "5 Costos", col_code, col_name, sal_debe)
@@ -235,7 +234,7 @@ def procesar_archivo_bytes(content, filename):
     }
 
     # -------------------------
-    # ESTADO DE RESULTADOS MENSUAL (usa columnas de movimiento: mov_debe/mov_haber)
+    # 2. ESTADO DE RESULTADOS MENSUAL (usa columnas de movimiento: mov_debe/mov_haber)
     # -------------------------
     ingresos_mes = movimiento_neto_por_texto(df_raw, "4 Ingresos", col_code, col_name, mov_debe, mov_haber, es_acreedora=True) + movimiento_neto_por_texto(df_raw, "704.04", col_code, col_name, mov_debe, mov_haber, es_acreedora=True)
     costos_mes = movimiento_neto_por_texto(df_raw, "5 Costos", col_code, col_name, mov_debe, mov_haber, es_acreedora=False)
@@ -261,15 +260,14 @@ def procesar_archivo_bytes(content, filename):
     }
 
     # -------------------------
-    # BALANCE (USANDO LISTAS EXACTAS + MATCH POR NOMBRE PARA COMPLETAR)
+    # 3. BALANCE (USANDO LISTA EXACTA + MATCH POR NOMBRE PARA COMPLETAR)
     # -------------------------
     # Reglas para seleccionar códigos exactos: combinamos prefijos y keywords por nombre para asegurar cobertura.
-    # Ajusta keywords si tu catálogo usa nombres distintos.
     codigos_efectivo = seleccionar_codigos_exactos(codigos_detectados, catalogo, prefijos=['101', '102'], keywords=['caja', 'efectivo', 'banco'])
     codigos_cxc = seleccionar_codigos_exactos(codigos_detectados, catalogo, prefijos=['105'], keywords=['clientes', 'cuentas por cobrar'])
     codigos_inventarios = seleccionar_codigos_exactos(codigos_detectados, catalogo, prefijos=['115'], keywords=['inventario', 'mercancías', 'mercancias'])
     codigos_imp_recuperar = seleccionar_codigos_exactos(codigos_detectados, catalogo, prefijos=['113', '114', '118', '119'], keywords=['iva', 'pagos provisionales', 'iva acreditable', 'iva pendiente'])
-    codigos_otras_cxc = seleccionar_codigos_exactos(codigos_detectados, catalogo, prefijos=['107'], keywords=['otros deudores', 'deudores diversos', 'funcionarios', 'empleados'])
+    codigos_otras_cxc = seleccionar_codigos_exactos(codigos_detectados, catalogo, prefijos=['107'], keywords=['otros deudores', 'deudores diversos', 'funcionarios', 'empleados', 'toka'])
 
     efectivo = obtener_saldo_por_catalogo_exacto(df_raw, codigos_efectivo, col_code, sal_debe, sal_haber, es_acreedora=False)
     cxc = obtener_saldo_por_catalogo_exacto(df_raw, codigos_cxc, col_code, sal_debe, sal_haber, es_acreedora=False)
@@ -300,13 +298,11 @@ def procesar_archivo_bytes(content, filename):
 
     pasivo_circulante = proveedores + imp_pagar + otros_pasivos
 
-    # Capital contable: 301 y 304 (resultados acumulados pueden incluir pérdidas 304.02)
+    # Capital contable
     codigos_capital_social = seleccionar_codigos_exactos(codigos_detectados, catalogo, prefijos=['301'], keywords=['capital'])
     codigos_resultados_acum = seleccionar_codigos_exactos(codigos_detectados, catalogo, prefijos=['304'], keywords=['utilidad', 'pérdida', 'perdida', 'resultados acumulados'])
 
     capital_social = obtener_saldo_por_catalogo_exacto(df_raw, codigos_capital_social, col_code, sal_debe, sal_haber, es_acreedora=True)
-    # Para resultados acumulados, sumar tanto utilidades como pérdidas (304.01 positivo, 304.02 negativo)
-    # obtenemos saldo como acreedora (haber - debe) y lo usamos directamente
     res_acumulados = obtener_saldo_por_catalogo_exacto(df_raw, codigos_resultados_acum, col_code, sal_debe, sal_haber, es_acreedora=True)
 
     utilidad_ejercicio = utilidad_neta_acum
@@ -339,7 +335,7 @@ def procesar_archivo_bytes(content, filename):
 
     return data_acumulada, data_mensual, data_balance
 
-# ==================== APP DASH (estructura original preservada) ====================
+# ==================== APP Dash (interfaz original preservada) ====================
 server = Flask(__name__)
 app = Dash(__name__, server=server)
 
@@ -375,6 +371,7 @@ estilo_tab_seleccionada = {
 }
 
 app.layout = html.Div([
+    # HEADER
     html.Div([
         html.Div([
             html.Img(src=f"data:image/png;base64,{logo_base64}" if logo_base64 else "", style={'height': '60px', 'marginRight': '20px', 'display': 'inline-block' if logo_base64 else 'none', 'backgroundColor': 'white', 'padding': '5px', 'borderRadius': '6px'}),
@@ -385,6 +382,7 @@ app.layout = html.Div([
         ], style={'display': 'flex', 'alignItems': 'center'})
     ], style={'background': 'linear-gradient(135deg, #0B2D5B 0%, #1E3A61 100%)', 'padding': '20px 30px', 'borderRadius': '0px 0px 15px 15px', 'boxShadow': '0 4px 6px -1px rgba(0,0,0,0.1)', 'marginBottom': '25px', 'borderBottom': '4px solid #C9A227'}),
 
+    # ZONA DE CARGA
     html.Div([
         html.Label('Carga de Datos Operativos', style={'fontWeight': '700', 'color': '#0B2D5B', 'fontSize': '15px', 'display': 'block', 'marginBottom': '8px'}),
         dcc.Upload(
@@ -397,6 +395,7 @@ app.layout = html.Div([
 
     html.Div(id='upload-status', style={'padding': '0 15px', 'fontWeight': '600', 'color': '#1E293B'}),
 
+    # FILTROS Y CONTROLES
     html.Div([
         html.Div([
             html.Label('Filtrar por Mes', style={'fontWeight': '600', 'color': '#1E293B', 'marginBottom': '6px', 'display': 'block'}),
@@ -416,12 +415,14 @@ app.layout = html.Div([
         ], style={'width':'23%','display':'inline-block'})
     ], style={'margin': '15px', 'padding': '20px', 'background': '#FFFFFF', 'borderRadius': '12px', 'boxShadow': '0 1px 3px rgba(0,0,0,0.05)'}),
 
+    # PESTAÑAS
     dcc.Tabs(id='report-tab', value='acumulado', children=[
         dcc.Tab(label='Estado de Resultados Acumulado', value='acumulado', style=estilo_tab, selected_style=estilo_tab_seleccionada),
         dcc.Tab(label='Estado de Resultados Mensual', value='mensual', style=estilo_tab, selected_style=estilo_tab_seleccionada),
         dcc.Tab(label='Balance General', value='balance', style=estilo_tab, selected_style=estilo_tab_seleccionada)
     ], style={'margin': '0 15px'}),
 
+    # CONTENEDOR TABLA Y GRÁFICO
     html.Div([
         html.Div(
             style={'width': '100%', 'marginBottom': '25px', 'background': '#FFFFFF', 'borderRadius': '0px 0px 12px 12px', 'padding': '20px', 'boxShadow': '0 1px 3px rgba(0,0,0,0.05)', 'borderTop': '1px solid #E2E8F0'},
@@ -467,6 +468,7 @@ def handle_upload(upload_contents, upload_names):
 
     df = pd.DataFrame(resultados)
 
+    # Forzar orden de columnas: Mes y Tipo_Reporte al inicio
     cols = df.columns.tolist()
     if 'Mes' in cols:
         cols.insert(0, cols.pop(cols.index('Mes')))
