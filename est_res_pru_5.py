@@ -22,7 +22,7 @@ def encode_image(path):
 
 logo_base64 = encode_image(PATH_DEL_LOGO)
 
-# ==================== DICCIONARIO DE MESES (ORDEN CRONOLÓGICO) ====================
+# ==================== DICCIONARIO DE MESES ====================
 MESES_ORDEN = {
     'ENERO': 1, 'FEBRERO': 2, 'MARZO': 3, 'ABRIL': 4, 
     'MAYO': 5, 'JUNIO': 6, 'JULIO': 7, 'AGOSTO': 8, 
@@ -36,6 +36,25 @@ def obtener_clave_orden(mes_str):
         return (int(año), MESES_ORDEN.get(mes.upper(), 0))
     return (0, 0)
 
+
+# ==================== CATÁLOGO EXACTO PARA BALANCE ====================
+# Edita estas listas agregando o quitando los códigos EXACTOS de tus cuentas de último nivel.
+CATALOGO_BALANCE = {
+    'Efectivo': ['101.01.002', '102.01.001', '102.01.002'], 
+    'Cuentas_por_Cobrar': ['105.01.001'],
+    'Inventarios': ['115.01.001', '115.02.001', '115.03.001'], 
+    'Impuestos_por_Recuperar': ['113.01.001', '114.01.001', '118.01.001', '119.01.001'],
+    'Otras_CxC': ['107.01.001', '107.05.002', '107.05.003'],
+    'Equipo_de_Computo': ['154.01.001', '156.01.001'],
+    'Depreciacion_Acumulada': ['171.01.001', '171.02.001'],
+    
+    'Proveedores': ['201.01.001', '201.03.001'],
+    'Impuestos_por_Pagar': ['208.01.001', '209.01.001', '213.01.001', '213.03.001', '216.01.001', '216.04.001', '216.05.001', '216.10.001', '216.11.001', '216.12.001'],
+    'Otros_Pasivos': ['205.02.001', '205.06.001', '206.01.001', '210.01.001'],
+    
+    'Capital_Social': ['301.01.001'],
+    'Resultados_Acumulados': ['304.01.001']
+}
 
 # ---------------------- LÓGICA DE PROCESAMIENTO CONTABLE ----------------------
 
@@ -79,19 +98,21 @@ def obtener_704_04_neto(df, es_acreedora=False):
             return (abono - cargo) if es_acreedora else (cargo - abono)
     return 0.0
 
-# --- Lógica 3: Para Balance General (Busca por Prefijo de Cuenta Nivel Detalle) ---
-def obtener_saldo_por_prefijos(df, prefijos, es_acreedora=False):
+# --- Lógica 3: Para Balance General (Busca Cuentas Exactas) ---
+def obtener_saldo_exacto(df, lista_codigos_exactos, es_acreedora=False):
     total_debe = 0.0
     total_haber = 0.0
     for i in range(len(df)):
+        # Limpiamos el código por si trae espacios del Excel
         codigo = str(df.iat[i, 0]).strip()
-        if pd.notna(df.iat[i, 0]) and codigo not in ['nan', 'None', '']:
-            if any(codigo.startswith(p) for p in prefijos):
-                debe = df.iat[i, 6]
-                haber = df.iat[i, 7]
-                if pd.notna(debe) and isinstance(debe, (int, float)): total_debe += float(debe)
-                if pd.notna(haber) and isinstance(haber, (int, float)): total_haber += float(haber)
-                    
+        
+        # Filtro de coincidencia exacta
+        if codigo in lista_codigos_exactos:
+            debe = df.iat[i, 6]
+            haber = df.iat[i, 7]
+            if pd.notna(debe) and isinstance(debe, (int, float)): total_debe += float(debe)
+            if pd.notna(haber) and isinstance(haber, (int, float)): total_haber += float(haber)
+                
     return (total_haber - total_debe) if es_acreedora else (total_debe - total_haber)
 
 # --- Procesador Principal del Excel ---
@@ -102,7 +123,7 @@ def procesar_archivo_bytes(content, filename):
     mes_nombre = os.path.splitext(os.path.basename(filename))[0]
 
     # ==========================================
-    # 1. CÁLCULO ESTADO DE RESULTADOS (ACUMULADO)
+    # 1. ESTADO DE RESULTADOS (ACUMULADO)
     # ==========================================
     ingresos_acum = obtener_valor(df, "4 Ingresos", 7) + obtener_704_04(df, 7)
     costos_acum = obtener_valor(df, "5 Costos", 6)
@@ -128,7 +149,7 @@ def procesar_archivo_bytes(content, filename):
     }
 
     # ==========================================
-    # 2. CÁLCULO ESTADO DE RESULTADOS (MENSUAL)
+    # 2. ESTADO DE RESULTADOS (MENSUAL)
     # ==========================================
     ingresos_mes = obtener_movimiento_neto(df, "4 Ingresos", es_acreedora=True) + obtener_704_04_neto(df, es_acreedora=True)
     costos_mes = obtener_movimiento_neto(df, "5 Costos", es_acreedora=False)
@@ -154,28 +175,28 @@ def procesar_archivo_bytes(content, filename):
     }
 
     # ==========================================
-    # 3. CÁLCULO BALANCE GENERAL (POSICIÓN FINANCIERA)
+    # 3. BALANCE GENERAL (CUENTAS EXACTAS)
     # ==========================================
-    efectivo = obtener_saldo_por_prefijos(df, ['101', '102'])
-    cxc = obtener_saldo_por_prefijos(df, ['105'])
-    inventarios = obtener_saldo_por_prefijos(df, ['115'])
-    imp_recuperar = obtener_saldo_por_prefijos(df, ['113', '114', '118', '119'])
-    otras_cxc = obtener_saldo_por_prefijos(df, ['107'])
+    efectivo = obtener_saldo_exacto(df, CATALOGO_BALANCE['Efectivo'])
+    cxc = obtener_saldo_exacto(df, CATALOGO_BALANCE['Cuentas_por_Cobrar'])
+    inventarios = obtener_saldo_exacto(df, CATALOGO_BALANCE['Inventarios'])
+    imp_recuperar = obtener_saldo_exacto(df, CATALOGO_BALANCE['Impuestos_por_Recuperar'])
+    otras_cxc = obtener_saldo_exacto(df, CATALOGO_BALANCE['Otras_CxC'])
     activo_circulante = efectivo + cxc + inventarios + imp_recuperar + otras_cxc
     
-    eq_computo = obtener_saldo_por_prefijos(df, ['154', '156'])
-    depreciacion = obtener_saldo_por_prefijos(df, ['171']) 
+    eq_computo = obtener_saldo_exacto(df, CATALOGO_BALANCE['Equipo_de_Computo'])
+    depreciacion = obtener_saldo_exacto(df, CATALOGO_BALANCE['Depreciacion_Acumulada']) 
     activo_fijo = eq_computo + depreciacion
     total_activo = activo_circulante + activo_fijo
 
-    proveedores = obtener_saldo_por_prefijos(df, ['201'], es_acreedora=True)
-    imp_pagar = obtener_saldo_por_prefijos(df, ['208', '209', '213', '216'], es_acreedora=True)
-    otros_pasivos = obtener_saldo_por_prefijos(df, ['205', '206', '210'], es_acreedora=True)
+    proveedores = obtener_saldo_exacto(df, CATALOGO_BALANCE['Proveedores'], es_acreedora=True)
+    imp_pagar = obtener_saldo_exacto(df, CATALOGO_BALANCE['Impuestos_por_Pagar'], es_acreedora=True)
+    otros_pasivos = obtener_saldo_exacto(df, CATALOGO_BALANCE['Otros_Pasivos'], es_acreedora=True)
     pasivo_circulante = proveedores + imp_pagar + otros_pasivos
     
-    capital_social = obtener_saldo_por_prefijos(df, ['301'], es_acreedora=True)
-    res_acumulados = obtener_saldo_por_prefijos(df, ['304'], es_acreedora=True)
-    utilidad_ejercicio = utilidad_neta_acum 
+    capital_social = obtener_saldo_exacto(df, CATALOGO_BALANCE['Capital_Social'], es_acreedora=True)
+    res_acumulados = obtener_saldo_exacto(df, CATALOGO_BALANCE['Resultados_Acumulados'], es_acreedora=True)
+    utilidad_ejercicio = utilidad_neta_acum # Vinculación ER con Balance
     
     capital_contable = capital_social + res_acumulados + utilidad_ejercicio
     total_pasivo_capital = pasivo_circulante + capital_contable
@@ -248,7 +269,7 @@ app.layout = html.Div([
         html.Div([
             html.Img(src=f"data:image/png;base64,{logo_base64}" if logo_base64 else "", style={'height': '60px', 'marginRight': '20px', 'display': 'inline-block' if logo_base64 else 'none', 'backgroundColor': 'white', 'padding': '5px', 'borderRadius': '6px'}),
             html.Div([
-                html.H2("REPORTE FINANCIERO INTEGRAL 2026", style={'color': '#FFFFFF', 'margin': '0', 'fontWeight': '700', 'fontSize': '26px', 'letterSpacing': '0.5px'}),
+                html.H2("REPORTE FINANCIERO INTEGRAL", style={'color': '#FFFFFF', 'margin': '0', 'fontWeight': '700', 'fontSize': '26px', 'letterSpacing': '0.5px'}),
                 html.Div("Resultados y Posición Financiera (Balance General)", style={'color': '#C9A227', 'fontSize': '13px', 'fontWeight': '5px', 'marginTop': '2px'})
             ], style={'display': 'inline-block', 'verticalAlign': 'middle'})
         ], style={'display': 'flex', 'alignItems': 'center'})
@@ -342,18 +363,16 @@ def handle_upload(upload_contents, upload_names):
 
     df = pd.DataFrame(resultados)
     
-    # REORDENAMIENTO MAESTRO: Forzamos a que 'Mes' siempre quede al inicio de todo el DataFrame globalmente
+    # Aseguramos que 'Mes' y 'Tipo_Reporte' siempre sean las primeras columnas globalmente
     cols = df.columns.tolist()
-    if 'Mes' in cols:
-        cols.insert(0, cols.pop(cols.index('Mes')))
-    if 'Tipo_Reporte' in cols:
-        cols.insert(0, cols.pop(cols.index('Tipo_Reporte'))) # Es interno, se ocultará, pero se queda junto a Mes
+    if 'Mes' in cols: cols.insert(0, cols.pop(cols.index('Mes')))
+    if 'Tipo_Reporte' in cols: cols.insert(0, cols.pop(cols.index('Tipo_Reporte')))
     df = df[cols]
     
     meses_unicos = sorted(df['Mes'].unique(), key=obtener_clave_orden)
     mes_options = [{'label': m, 'value': m} for m in meses_unicos]
     
-    status_msg = html.Div(f'✓ {len(valid_files)} archivos procesados con éxito.', style={'color': '#10B981', 'padding': '10px 0'})
+    status_msg = html.Div(f'✓ {len(valid_files)} archivos procesados exitosamente.', style={'color': '#10B981', 'padding': '10px 0'})
     return df.to_json(date_format='iso', orient='split'), status_msg, mes_options
 
 
@@ -374,9 +393,8 @@ def update_controls(df_json, tab):
         df = pd.read_json(df_json, orient='split')
         
     filtro_tipo = "Balance" if tab == "balance" else ("Acumulado" if tab == "acumulado" else "Mensual")
-    df = df[df['Tipo_Reporte'] == filtro_tipo]
+    df = df[df['Tipo_Reporte'] == filtro_tipo].dropna(axis=1, how='all')
     
-    df = df.dropna(axis=1, how='all')
     columnas_disponibles = [c for c in df.columns if c not in ['Mes', 'Tipo_Reporte']]
     
     metric_options = [{'label': m, 'value': m} for m in columnas_disponibles]
@@ -425,7 +443,7 @@ def update_views(df_json, tab, metric, chart_type, meses, cols_seleccionadas, so
         df = df.sort_values('_sort_key', ascending=True)
     df = df.drop('_sort_key', axis=1)
 
-    # AQUÍ ASEGURAMOS QUE MES SE MANTENGA A LA IZQUIERDA EN LA VISTA FINAL
+    # ANCLAJE DE LA COLUMNA MES A LA IZQUIERDA
     display_df = df.copy()
     if cols_seleccionadas:
         display_df = display_df[['Mes'] + cols_seleccionadas]
