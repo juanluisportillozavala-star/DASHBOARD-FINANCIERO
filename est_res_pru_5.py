@@ -22,7 +22,7 @@ def encode_image(path):
 
 logo_base64 = encode_image(PATH_DEL_LOGO)
 
-# ==================== DICCIONARIO DE MESES (ORDEN CRONOLÓGICO) ====================
+# ==================== DICCIONARIO DE MESES ====================
 MESES_ORDEN = {
     'ENERO': 1, 'FEBRERO': 2, 'MARZO': 3, 'ABRIL': 4, 
     'MAYO': 5, 'JUNIO': 6, 'JULIO': 7, 'AGOSTO': 8, 
@@ -38,13 +38,15 @@ def obtener_clave_orden(mes_str):
 
 
 # ==================== CATÁLOGO EXACTO PARA BALANCE ====================
-# Extraído al nivel más bajo directamente desde tu Balanza de Comprobación
 CATALOGO_BALANCE = {
     'Efectivo': ['101.01.002', '102.01.001', '102.01.002'], 
     'Cuentas_por_Cobrar': ['105.01.001'],
     'Inventarios': ['115.01.001', '115.01.002', '115.01.003'], 
     'Impuestos_por_Recuperar': ['113.01.001', '114.01.001', '118.01.001', '119.01.001', '119.01.003'],
-    'Otras_CxC': ['107.01.001', '107.05.002', '107.05.003', '120.01.001'],
+    
+    # SE ACTUALIZAN CON LOS CÓDIGOS ESPECÍFICOS QUE COMPONEN TUS GRUPOS
+    'Otras_CxC_Grupos': ['107.01', '107.05', '120.01', '184.01', '899.01'], 
+    
     'Equipo_de_Computo': ['154.01.001', '154.01.002', '156.01.001'],
     'Depreciacion_Acumulada': ['171.03.001', '171.03.002', '171.05.001'],
     
@@ -57,12 +59,11 @@ CATALOGO_BALANCE = {
     'Otros_Pasivos': ['205.02.001', '205.06.002', '206.01.001', '210.01.001'],
     
     'Capital_Social': ['301.01.001'],
-    'Resultados_Acumulados': ['304.01.001', '304.02.001']
+    'Resultados_Acumulados_Grupos': ['304.01', '304.02'] 
 }
 
 # ---------------------- LÓGICA DE PROCESAMIENTO CONTABLE ----------------------
 
-# --- Lógica 1: Para Reporte Acumulado ---
 def obtener_valor(df, cuenta, columna):
     for i in range(len(df)):
         valor_cuenta = str(df.iat[i, 1]).strip()
@@ -82,7 +83,6 @@ def obtener_704_04(df, columna):
             return float(valor)
     return 0.0
 
-# --- Lógica 2: Para Reporte Mensual ---
 def obtener_movimiento_neto(df, cuenta, es_acreedora=False):
     for i in range(len(df)):
         valor_cuenta = str(df.iat[i, 1]).strip()
@@ -102,15 +102,11 @@ def obtener_704_04_neto(df, es_acreedora=False):
             return (abono - cargo) if es_acreedora else (cargo - abono)
     return 0.0
 
-# --- Lógica 3: Para Balance General (BÚSQUEDA EXACTA SIN PREFIJOS) ---
 def obtener_saldo_exacto(df, lista_codigos_exactos, es_acreedora=False):
     total_debe = 0.0
     total_haber = 0.0
     for i in range(len(df)):
-        # Extraemos el código quitando espacios para evitar errores del Excel
         codigo = str(df.iat[i, 0]).strip()
-        
-        # Validación EXACTA: el código debe estar directamente en la lista proporcionada
         if codigo in lista_codigos_exactos:
             debe = df.iat[i, 6]
             haber = df.iat[i, 7]
@@ -118,6 +114,64 @@ def obtener_saldo_exacto(df, lista_codigos_exactos, es_acreedora=False):
             if pd.notna(haber) and isinstance(haber, (int, float)): total_haber += float(haber)
                 
     return (total_haber - total_debe) if es_acreedora else (total_debe - total_haber)
+
+# --- NUEVAS FUNCIONES ESPECÍFICAS SOLICITADAS POR EL USUARIO ---
+
+def calcular_otras_cuentas_cobrar(df, grupos):
+    """
+    Suma columna G (Débito Final) y resta columna H (Crédito Final)
+    buscando la coincidencia exacta de que el código empiece con los grupos.
+    """
+    total = 0.0
+    for i in range(len(df)):
+        codigo = str(df.iat[i, 0]).strip()
+        # Verificamos si la cuenta pertenece a alguno de los grupos dados (ej. 107.01)
+        if pd.notna(df.iat[i, 0]) and codigo != 'nan' and codigo != '':
+            if any(codigo.startswith(grupo) for grupo in grupos):
+                g_debito = df.iat[i, 6]
+                h_credito = df.iat[i, 7]
+                
+                g_val = float(g_debito) if pd.notna(g_debito) and isinstance(g_debito, (int, float)) else 0.0
+                h_val = float(h_credito) if pd.notna(h_credito) and isinstance(h_credito, (int, float)) else 0.0
+                
+                # Fórmula exacta solicitada: Suma G, Resta H (+ G - H)
+                total += (g_val - h_val)
+    return total
+
+def calcular_resultados_acumulados(df, grupos):
+    """
+    Para cuentas 304.01 y 304.02: Suma columna H (Crédito) y resta columna G (Débito).
+    Adicionalmente, resta la columna H donde el nombre diga 'GANACIAS/PERDIDAS NO DISTRIBUIDAS'.
+    """
+    total = 0.0
+    
+    # 1. Suma H y resta G para las cuentas 304.xx
+    for i in range(len(df)):
+        codigo = str(df.iat[i, 0]).strip()
+        if pd.notna(df.iat[i, 0]) and codigo != 'nan' and codigo != '':
+            if any(codigo.startswith(grupo) for grupo in grupos):
+                g_debito = df.iat[i, 6]
+                h_credito = df.iat[i, 7]
+                
+                g_val = float(g_debito) if pd.notna(g_debito) and isinstance(g_debito, (int, float)) else 0.0
+                h_val = float(h_credito) if pd.notna(h_credito) and isinstance(h_credito, (int, float)) else 0.0
+                
+                # Fórmula solicitada: Suma H, Resta G (+ H - G)
+                total += (h_val - g_val)
+                
+    # 2. Restar columna H para 'GANACIAS/PERDIDAS NO DISTRIBUIDAS'
+    for i in range(len(df)):
+        nombre_cuenta = str(df.iat[i, 1]).strip().upper()
+        # Buscamos variaciones del texto como "GANACIAS" o "GANANCIAS"
+        if "NO DISTRIBUIDAS" in nombre_cuenta and ("GANANCIA" in nombre_cuenta or "GANACIA" in nombre_cuenta or "PERDIDA" in nombre_cuenta):
+            h_credito = df.iat[i, 7]
+            h_val = float(h_credito) if pd.notna(h_credito) and isinstance(h_credito, (int, float)) else 0.0
+            
+            # Fórmula solicitada: Restar H
+            total -= h_val
+            
+    return total
+
 
 # --- Procesador Principal del Excel ---
 def procesar_archivo_bytes(content, filename):
@@ -179,13 +233,19 @@ def procesar_archivo_bytes(content, filename):
     }
 
     # ==========================================
-    # 3. BALANCE GENERAL (CUENTAS EXACTAS)
+    # 3. BALANCE GENERAL (POSICIÓN FINANCIERA)
     # ==========================================
     efectivo = obtener_saldo_exacto(df, CATALOGO_BALANCE['Efectivo'])
     cxc = obtener_saldo_exacto(df, CATALOGO_BALANCE['Cuentas_por_Cobrar'])
     inventarios = obtener_saldo_exacto(df, CATALOGO_BALANCE['Inventarios'])
     imp_recuperar = obtener_saldo_exacto(df, CATALOGO_BALANCE['Impuestos_por_Recuperar'])
-    otras_cxc = obtener_saldo_exacto(df, CATALOGO_BALANCE['Otras_CxC'])
+    
+    # -----------------------------------------------------
+    # LÓGICAS NUEVAS APLICADAS AQUÍ:
+    # -----------------------------------------------------
+    otras_cxc = calcular_otras_cuentas_cobrar(df, CATALOGO_BALANCE['Otras_CxC_Grupos'])
+    res_acumulados = calcular_resultados_acumulados(df, CATALOGO_BALANCE['Resultados_Acumulados_Grupos'])
+    
     activo_circulante = efectivo + cxc + inventarios + imp_recuperar + otras_cxc
     
     eq_computo = obtener_saldo_exacto(df, CATALOGO_BALANCE['Equipo_de_Computo'])
@@ -199,8 +259,7 @@ def procesar_archivo_bytes(content, filename):
     pasivo_circulante = proveedores + imp_pagar + otros_pasivos
     
     capital_social = obtener_saldo_exacto(df, CATALOGO_BALANCE['Capital_Social'], es_acreedora=True)
-    res_acumulados = obtener_saldo_exacto(df, CATALOGO_BALANCE['Resultados_Acumulados'], es_acreedora=True)
-    utilidad_ejercicio = utilidad_neta_acum # Vinculación ER con Balance
+    utilidad_ejercicio = utilidad_neta_acum 
     
     capital_contable = capital_social + res_acumulados + utilidad_ejercicio
     total_pasivo_capital = pasivo_circulante + capital_contable
@@ -367,18 +426,18 @@ def handle_upload(upload_contents, upload_names):
 
     df = pd.DataFrame(resultados)
     
-    # ANCLAR LA COLUMNA 'Mes' AL LADO IZQUIERDO GLOBALMENTE
+    # REORDENAMIENTO MAESTRO: Forzamos a que 'Mes' siempre quede al inicio de todo el DataFrame globalmente
     cols = df.columns.tolist()
     if 'Mes' in cols:
         cols.insert(0, cols.pop(cols.index('Mes')))
     if 'Tipo_Reporte' in cols:
-        cols.insert(0, cols.pop(cols.index('Tipo_Reporte'))) # Es interno, se ocultará, pero se queda junto a Mes
+        cols.insert(0, cols.pop(cols.index('Tipo_Reporte'))) 
     df = df[cols]
     
     meses_unicos = sorted(df['Mes'].unique(), key=obtener_clave_orden)
     mes_options = [{'label': m, 'value': m} for m in meses_unicos]
     
-    status_msg = html.Div(f'✓ {len(valid_files)} archivos procesados con éxito. Balance calculado con el catálogo exacto.', style={'color': '#10B981', 'padding': '10px 0'})
+    status_msg = html.Div(f'✓ {len(valid_files)} archivos procesados con éxito. Balance calculado con reglas actualizadas.', style={'color': '#10B981', 'padding': '10px 0'})
     return df.to_json(date_format='iso', orient='split'), status_msg, mes_options
 
 
