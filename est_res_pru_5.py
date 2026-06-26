@@ -39,14 +39,13 @@ def obtener_clave_orden(mes_str):
 
 # ---------------------- LÓGICA DE PROCESAMIENTO CONTABLE ----------------------
 
-# --- Lógica 1: Para Reporte Acumulado (Lee saldos finales) ---
+# --- Lógica 1: Para Reporte Acumulado (Lee saldos finales directos) ---
 def obtener_valor(df, cuenta, columna):
     for i in range(len(df)):
         valor_cuenta = str(df.iat[i, 1]).strip()
         if valor_cuenta.lower() == cuenta.lower():
             valor = df.iat[i, columna]
-            if pd.isna(valor):
-                return 0.0
+            if pd.isna(valor): return 0.0
             return float(valor)
     return 0.0
 
@@ -56,26 +55,18 @@ def obtener_704_04(df, columna):
         valor_cuenta = str(df.iat[i, 1]).strip()
         if texto_busqueda in valor_cuenta:
             valor = df.iat[i, columna]
-            if pd.isna(valor):
-                return 0.0
+            if pd.isna(valor): return 0.0
             return float(valor)
     return 0.0
 
 # --- Lógica 2: Para Reporte Mensual (Calcula Movimiento Neto del Mes) ---
 def obtener_movimiento_neto(df, cuenta, es_acreedora=False):
-    """Calcula el movimiento neto mensual restando cargos (col 4) y abonos (col 5)"""
     for i in range(len(df)):
         valor_cuenta = str(df.iat[i, 1]).strip()
         if valor_cuenta.lower() == cuenta.lower():
-            cargo_col4 = df.iat[i, 4] if not pd.isna(df.iat[i, 4]) else 0.0
-            abono_col5 = df.iat[i, 5] if not pd.isna(df.iat[i, 5]) else 0.0
-            
-            if es_acreedora:
-                # Ingresos: Abonos menos Cargos (Devoluciones/Descuentos)
-                return float(abono_col5) - float(cargo_col4)
-            else:
-                # Gastos/Costos: Cargos menos Abonos (Cancelaciones/Ajustes)
-                return float(cargo_col4) - float(abono_col5)
+            cargo = float(df.iat[i, 4]) if not pd.isna(df.iat[i, 4]) else 0.0
+            abono = float(df.iat[i, 5]) if not pd.isna(df.iat[i, 5]) else 0.0
+            return (abono - cargo) if es_acreedora else (cargo - abono)
     return 0.0
 
 def obtener_704_04_neto(df, es_acreedora=False):
@@ -83,25 +74,35 @@ def obtener_704_04_neto(df, es_acreedora=False):
     for i in range(len(df)):
         valor_cuenta = str(df.iat[i, 1]).strip()
         if texto_busqueda in valor_cuenta:
-            cargo_col4 = df.iat[i, 4] if not pd.isna(df.iat[i, 4]) else 0.0
-            abono_col5 = df.iat[i, 5] if not pd.isna(df.iat[i, 5]) else 0.0
-            
-            if es_acreedora:
-                return float(abono_col5) - float(cargo_col4)
-            else:
-                return float(cargo_col4) - float(abono_col5)
+            cargo = float(df.iat[i, 4]) if not pd.isna(df.iat[i, 4]) else 0.0
+            abono = float(df.iat[i, 5]) if not pd.isna(df.iat[i, 5]) else 0.0
+            return (abono - cargo) if es_acreedora else (cargo - abono)
     return 0.0
+
+# --- Lógica 3: Para Balance General (Busca por Prefijo de Cuenta Nivel Detalle) ---
+def obtener_saldo_por_prefijos(df, prefijos, es_acreedora=False):
+    total_debe = 0.0
+    total_haber = 0.0
+    for i in range(len(df)):
+        codigo = str(df.iat[i, 0]).strip()
+        if pd.notna(df.iat[i, 0]) and codigo not in ['nan', 'None', '']:
+            if any(codigo.startswith(p) for p in prefijos):
+                debe = df.iat[i, 6]
+                haber = df.iat[i, 7]
+                if pd.notna(debe) and isinstance(debe, (int, float)): total_debe += float(debe)
+                if pd.notna(haber) and isinstance(haber, (int, float)): total_haber += float(haber)
+                    
+    return (total_haber - total_debe) if es_acreedora else (total_debe - total_haber)
 
 # --- Procesador Principal del Excel ---
 def procesar_archivo_bytes(content, filename):
     header, encoded = content.split(",", 1)
     data = base64.b64decode(encoded)
     df = pd.read_excel(io.BytesIO(data), header=None)
-    
     mes_nombre = os.path.splitext(os.path.basename(filename))[0]
 
     # ==========================================
-    # 1. CÁLCULO ACUMULADO (Saldos Finales: Col 6 y 7)
+    # 1. CÁLCULO ESTADO DE RESULTADOS (ACUMULADO)
     # ==========================================
     ingresos_acum = obtener_valor(df, "4 Ingresos", 7) + obtener_704_04(df, 7)
     costos_acum = obtener_valor(df, "5 Costos", 6)
@@ -116,19 +117,18 @@ def procesar_archivo_bytes(content, filename):
     utilidad_neta_acum = utilidad_operacion_acum - gastos_fin_acum + prod_fin_acum
 
     data_acumulada = {
+        "Mes": mes_nombre, "Tipo_Reporte": "Acumulado",
         "Ingresos": ingresos_acum, "Costos": costos_acum, "% Costos": costos_acum/ingresos_acum if ingresos_acum else 0,
         "Utilidad Bruta": utilidad_bruta_acum, "% Utilidad Bruta": utilidad_bruta_acum/ingresos_acum if ingresos_acum else 0,
         "Gastos Generales": gastos_gen_acum, "% Gastos Gen.": gastos_gen_acum/ingresos_acum if ingresos_acum else 0,
         "Utilidad Operación": utilidad_operacion_acum, "% Util. Operación": utilidad_operacion_acum/ingresos_acum if ingresos_acum else 0,
         "Gastos Financieros": gastos_fin_acum, "% Gastos Fin.": gastos_fin_acum/ingresos_acum if ingresos_acum else 0,
         "Productos Financieros": prod_fin_acum, "% Prod. Fin.": prod_fin_acum/ingresos_acum if ingresos_acum else 0,
-        "Utilidad Neta": utilidad_neta_acum, "% Utilidad Neta": utilidad_neta_acum/ingresos_acum if ingresos_acum else 0,
-        "Mes": mes_nombre,
-        "Tipo_Reporte": "Acumulado"
+        "Utilidad Neta": utilidad_neta_acum, "% Utilidad Neta": utilidad_neta_acum/ingresos_acum if ingresos_acum else 0
     }
 
     # ==========================================
-    # 2. CÁLCULO MENSUAL (Movimientos Netos: Col 4 y 5)
+    # 2. CÁLCULO ESTADO DE RESULTADOS (MENSUAL)
     # ==========================================
     ingresos_mes = obtener_movimiento_neto(df, "4 Ingresos", es_acreedora=True) + obtener_704_04_neto(df, es_acreedora=True)
     costos_mes = obtener_movimiento_neto(df, "5 Costos", es_acreedora=False)
@@ -143,18 +143,67 @@ def procesar_archivo_bytes(content, filename):
     utilidad_neta_mes = utilidad_operacion_mes - gastos_fin_mes + prod_fin_mes
 
     data_mensual = {
+        "Mes": mes_nombre, "Tipo_Reporte": "Mensual",
         "Ingresos": ingresos_mes, "Costos": costos_mes, "% Costos": costos_mes/ingresos_mes if ingresos_mes else 0,
         "Utilidad Bruta": utilidad_bruta_mes, "% Utilidad Bruta": utilidad_bruta_mes/ingresos_mes if ingresos_mes else 0,
         "Gastos Generales": gastos_gen_mes, "% Gastos Gen.": gastos_gen_mes/ingresos_mes if ingresos_mes else 0,
         "Utilidad Operación": utilidad_operacion_mes, "% Util. Operación": utilidad_operacion_mes/ingresos_mes if ingresos_mes else 0,
         "Gastos Financieros": gastos_fin_mes, "% Gastos Fin.": gastos_fin_mes/ingresos_mes if ingresos_mes else 0,
         "Productos Financieros": prod_fin_mes, "% Prod. Fin.": prod_fin_mes/ingresos_mes if ingresos_mes else 0,
-        "Utilidad Neta": utilidad_neta_mes, "% Utilidad Neta": utilidad_neta_mes/ingresos_mes if ingresos_mes else 0,
-        "Mes": mes_nombre,
-        "Tipo_Reporte": "Mensual"
+        "Utilidad Neta": utilidad_neta_mes, "% Utilidad Neta": utilidad_neta_mes/ingresos_mes if ingresos_mes else 0
     }
 
-    return data_acumulada, data_mensual
+    # ==========================================
+    # 3. CÁLCULO BALANCE GENERAL (POSICIÓN FINANCIERA)
+    # ==========================================
+    efectivo = obtener_saldo_por_prefijos(df, ['101', '102'])
+    cxc = obtener_saldo_por_prefijos(df, ['105'])
+    inventarios = obtener_saldo_por_prefijos(df, ['115'])
+    imp_recuperar = obtener_saldo_por_prefijos(df, ['113', '114', '118', '119'])
+    otras_cxc = obtener_saldo_por_prefijos(df, ['107'])
+    activo_circulante = efectivo + cxc + inventarios + imp_recuperar + otras_cxc
+    
+    eq_computo = obtener_saldo_por_prefijos(df, ['154', '156'])
+    depreciacion = obtener_saldo_por_prefijos(df, ['171']) 
+    activo_fijo = eq_computo + depreciacion
+    total_activo = activo_circulante + activo_fijo
+
+    proveedores = obtener_saldo_por_prefijos(df, ['201'], es_acreedora=True)
+    imp_pagar = obtener_saldo_por_prefijos(df, ['208', '209', '213', '216'], es_acreedora=True)
+    otros_pasivos = obtener_saldo_por_prefijos(df, ['205', '206', '210'], es_acreedora=True)
+    pasivo_circulante = proveedores + imp_pagar + otros_pasivos
+    
+    capital_social = obtener_saldo_por_prefijos(df, ['301'], es_acreedora=True)
+    res_acumulados = obtener_saldo_por_prefijos(df, ['304'], es_acreedora=True)
+    utilidad_ejercicio = utilidad_neta_acum 
+    
+    capital_contable = capital_social + res_acumulados + utilidad_ejercicio
+    total_pasivo_capital = pasivo_circulante + capital_contable
+
+    data_balance = {
+        "Mes": mes_nombre, "Tipo_Reporte": "Balance",
+        "Efectivo": efectivo, "% Efectivo": efectivo/total_activo if total_activo else 0,
+        "Cuentas por Cobrar": cxc, "% Cuentas x Cobrar": cxc/total_activo if total_activo else 0,
+        "Inventarios": inventarios, "% Inventarios": inventarios/total_activo if total_activo else 0,
+        "Impuestos por Recuperar": imp_recuperar, "% Imp. Recuperar": imp_recuperar/total_activo if total_activo else 0,
+        "Otras Cuentas x Cobrar": otras_cxc, "% Otras CxC": otras_cxc/total_activo if total_activo else 0,
+        "Total Activo Circulante": activo_circulante, "% Act. Circulante": activo_circulante/total_activo if total_activo else 0,
+        "Equipo de Cómputo": eq_computo,
+        "Depreciación Acumulada": depreciacion,
+        "Total Activo Fijo": activo_fijo, "% Act. Fijo": activo_fijo/total_activo if total_activo else 0,
+        "Total Activo": total_activo,
+        "Proveedores": proveedores, "% Proveedores": proveedores/total_pasivo_capital if total_pasivo_capital else 0,
+        "Impuestos por Pagar": imp_pagar, "% Imp. Pagar": imp_pagar/total_pasivo_capital if total_pasivo_capital else 0,
+        "Otros Pasivos": otros_pasivos, "% Otros Pasivos": otros_pasivos/total_pasivo_capital if total_pasivo_capital else 0,
+        "Total Pasivo": pasivo_circulante, "% Total Pasivo": pasivo_circulante/total_pasivo_capital if total_pasivo_capital else 0,
+        "Capital Social": capital_social,
+        "Resultados Acumulados": res_acumulados,
+        "Utilidad del Ejercicio": utilidad_ejercicio,
+        "Total Capital": capital_contable, "% Total Capital": capital_contable/total_pasivo_capital if total_pasivo_capital else 0,
+        "Total Pasivo y Capital": total_pasivo_capital
+    }
+
+    return data_acumulada, data_mensual, data_balance
 
 
 # ---------------------- APP Dash ----------------------
@@ -170,55 +219,26 @@ app.index_string = """
     {%favicon%}
     {%css%}
     <style>
-        html, body, #react-entry-point {
-            width: 100%;
-            height: 100%;
-            margin: 0;
-            padding: 0;
-            background-color: #F8FAFC;
-            font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
-        }
-        .dash-table-container {
-            width: 100% !important;
-        }
-        .Select-control {
-            border: 1px solid #E2E8F0 !important;
-            border-radius: 8px !important;
-        }
+        html, body, #react-entry-point { width: 100%; height: 100%; margin: 0; padding: 0; background-color: #F8FAFC; font-family: 'Segoe UI', system-ui, -apple-system, sans-serif; }
+        .dash-table-container { width: 100% !important; }
+        .Select-control { border: 1px solid #E2E8F0 !important; border-radius: 8px !important; }
     </style>
 </head>
 <body>
     {%app_entry%}
-    <footer>
-        {%config%}
-        {%scripts%}
-        {%renderer%}
-    </footer>
+    <footer>{%config%}{%scripts%}{%renderer%}</footer>
 </body>
 </html>
 """
 
-# Estilos personalizados para las pestañas
 estilo_tab = {
-    'borderBottom': '1px solid #E2E8F0',
-    'padding': '12px 24px',
-    'fontWeight': '600',
-    'color': '#64748B',
-    'backgroundColor': '#F8FAFC',
-    'borderRadius': '8px 8px 0px 0px',
-    'marginRight': '4px'
+    'borderBottom': '1px solid #E2E8F0', 'padding': '12px 24px', 'fontWeight': '600',
+    'color': '#64748B', 'backgroundColor': '#F8FAFC', 'borderRadius': '8px 8px 0px 0px', 'marginRight': '4px'
 }
-
 estilo_tab_seleccionada = {
-    'borderTop': '3px solid #0B2D5B',
-    'borderBottom': '3px solid #C9A227',
-    'backgroundColor': '#FFFFFF',
-    'padding': '11px 24px',
-    'color': '#0B2D5B',
-    'fontWeight': '700',
-    'borderRadius': '8px 8px 0px 0px',
-    'marginRight': '4px',
-    'boxShadow': '0px -2px 5px rgba(0,0,0,0.02)'
+    'borderTop': '3px solid #0B2D5B', 'borderBottom': '3px solid #C9A227', 'backgroundColor': '#FFFFFF',
+    'padding': '11px 24px', 'color': '#0B2D5B', 'fontWeight': '700', 'borderRadius': '8px 8px 0px 0px',
+    'marginRight': '4px', 'boxShadow': '0px -2px 5px rgba(0,0,0,0.02)'
 }
 
 app.layout = html.Div([
@@ -226,127 +246,67 @@ app.layout = html.Div([
     # HEADER
     html.Div([
         html.Div([
-            html.Img(
-                src=f"data:image/png;base64,{logo_base64}" if logo_base64 else "",
-                style={
-                    'height': '60px', 
-                    'marginRight': '20px', 
-                    'display': 'inline-block' if logo_base64 else 'none',
-                    'backgroundColor': 'white',
-                    'padding': '5px',
-                    'borderRadius': '6px'
-                }
-            ),
+            html.Img(src=f"data:image/png;base64,{logo_base64}" if logo_base64 else "", style={'height': '60px', 'marginRight': '20px', 'display': 'inline-block' if logo_base64 else 'none', 'backgroundColor': 'white', 'padding': '5px', 'borderRadius': '6px'}),
             html.Div([
-                html.H2("ESTADO DE RESULTADOS 2026", style={'color': '#FFFFFF', 'margin': '0', 'fontWeight': '700', 'fontSize': '26px', 'letterSpacing': '0.5px'}),
-                html.Div("Sistema Interno de Análisis Financiero | Control Mensual y Acumulado", style={'color': '#C9A227', 'fontSize': '13px', 'fontWeight': '5px', 'marginTop': '2px'})
+                html.H2("REPORTE FINANCIERO INTEGRAL 2026", style={'color': '#FFFFFF', 'margin': '0', 'fontWeight': '700', 'fontSize': '26px', 'letterSpacing': '0.5px'}),
+                html.Div("Resultados y Posición Financiera (Balance General)", style={'color': '#C9A227', 'fontSize': '13px', 'fontWeight': '5px', 'marginTop': '2px'})
             ], style={'display': 'inline-block', 'verticalAlign': 'middle'})
         ], style={'display': 'flex', 'alignItems': 'center'})
-    ], style={
-        'background': 'linear-gradient(135deg, #0B2D5B 0%, #1E3A61 100%)',
-        'padding': '20px 30px',
-        'borderRadius': '0px 0px 15px 15px',
-        'boxShadow': '0 4px 6px -1px rgba(0,0,0,0.1)',
-        'marginBottom': '25px',
-        'borderBottom': '4px solid #C9A227'
-    }),
+    ], style={'background': 'linear-gradient(135deg, #0B2D5B 0%, #1E3A61 100%)', 'padding': '20px 30px', 'borderRadius': '0px 0px 15px 15px', 'boxShadow': '0 4px 6px -1px rgba(0,0,0,0.1)', 'marginBottom': '25px', 'borderBottom': '4px solid #C9A227'}),
 
-    # ZONA DE CARGA DE ARCHIVOS
+    # ZONA DE CARGA
     html.Div([
         html.Label('Carga de Datos Operativos', style={'fontWeight': '700', 'color': '#0B2D5B', 'fontSize': '15px', 'display': 'block', 'marginBottom': '8px'}),
         dcc.Upload(
             id='upload-data',
-            children=html.Div([
-                html.Span('📂 ', style={'fontSize': '20px', 'marginRight': '8px'}),
-                'Arrastra o selecciona la carpeta con los archivos mensuales (.xlsx)'
-            ]),
-            style={
-                'width': '100%', 
-                'height': '65px',
-                'lineHeight': '65px',
-                'borderWidth': '2px',
-                'borderStyle': 'dashed',
-                'borderColor': '#0B2D5B',
-                'borderRadius': '10px',
-                'textAlign': 'center',
-                'background': '#FFFFFF',
-                'color': '#0B2D5B',
-                'fontWeight': '600',
-                'cursor': 'pointer',
-                'transition': 'all 0.3s ease'
-            },
-            multiple=True,
-            enable_folder_selection=True,
-            accept='.xlsx'
+            children=html.Div([html.Span('📂 ', style={'fontSize': '20px', 'marginRight': '8px'}), 'Arrastra o selecciona la carpeta con las balanzas (.xlsx)']),
+            style={'width': '100%', 'height': '65px', 'lineHeight': '65px', 'borderWidth': '2px', 'borderStyle': 'dashed', 'borderColor': '#0B2D5B', 'borderRadius': '10px', 'textAlign': 'center', 'background': '#FFFFFF', 'color': '#0B2D5B', 'fontWeight': '600', 'cursor': 'pointer'},
+            multiple=True, enable_folder_selection=True, accept='.xlsx'
         )
     ], style={'padding': '0 15px', 'marginBottom': '20px'}),
 
     html.Div(id='upload-status', style={'padding': '0 15px', 'fontWeight': '600', 'color': '#1E293B'}),
 
-    # FILTROS Y CONTROLES GLOBALES
+    # FILTROS Y CONTROLES
     html.Div([
         html.Div([
             html.Label('Filtrar por Mes', style={'fontWeight': '600', 'color': '#1E293B', 'marginBottom': '6px', 'display': 'block'}), 
             dcc.Dropdown(id='mes-filter', multi=True, placeholder='Todos los meses')
         ], style={'width':'23%','display':'inline-block','marginRight':'2%'}),
-        
         html.Div([
             html.Label('Columnas Visibles', style={'fontWeight': '600', 'color': '#1E293B', 'marginBottom': '6px', 'display': 'block'}), 
             dcc.Dropdown(id='columns-filter', multi=True, placeholder='Todas las columnas', value=[])
         ], style={'width':'23%','display':'inline-block','marginRight':'2%'}),
-        
         html.Div([
             html.Label('Métrica del Gráfico', style={'fontWeight': '600', 'color': '#1E293B', 'marginBottom': '6px', 'display': 'block'}), 
             dcc.Dropdown(id='metric-dropdown')
         ], style={'width':'23%','display':'inline-block','marginRight':'2%'}),
-        
         html.Div([
             html.Label('Tipo de Vista', style={'fontWeight': '600', 'color': '#1E293B', 'marginBottom': '6px', 'display': 'block'}), 
             dcc.Dropdown(id='chart-type', options=[{'label':'Líneas de Tendencia','value':'lines'},{'label':'Barras Comparativas','value':'bars'}], value='lines', clearable=False)
         ], style={'width':'23%','display':'inline-block'})
-    ], style={
-        'margin': '15px',
-        'padding': '20px',
-        'background': '#FFFFFF',
-        'borderRadius': '12px',
-        'boxShadow': '0 1px 3px rgba(0,0,0,0.05)'
-    }),
+    ], style={'margin': '15px', 'padding': '20px', 'background': '#FFFFFF', 'borderRadius': '12px', 'boxShadow': '0 1px 3px rgba(0,0,0,0.05)'}),
 
-    # NAVEGACIÓN POR PESTAÑAS (ACUMULADO VS MENSUAL)
+    # PESTAÑAS 
     dcc.Tabs(id='report-tab', value='acumulado', children=[
         dcc.Tab(label='Estado de Resultados Acumulado', value='acumulado', style=estilo_tab, selected_style=estilo_tab_seleccionada),
-        dcc.Tab(label='Estado de Resultados Mensual', value='mensual', style=estilo_tab, selected_style=estilo_tab_seleccionada)
+        dcc.Tab(label='Estado de Resultados Mensual', value='mensual', style=estilo_tab, selected_style=estilo_tab_seleccionada),
+        dcc.Tab(label='Balance General', value='balance', style=estilo_tab, selected_style=estilo_tab_seleccionada)
     ], style={'margin': '0 15px'}),
 
-    # CONTENEDORES DE REPORTES Y GRÁFICOS
+    # CONTENEDOR TABLA Y GRÁFICO
     html.Div([
         html.Div(
             style={'width': '100%', 'marginBottom': '25px', 'background': '#FFFFFF', 'borderRadius': '0px 0px 12px 12px', 'padding': '20px', 'boxShadow': '0 1px 3px rgba(0,0,0,0.05)', 'borderTop': '1px solid #E2E8F0'},
             children=[
                 dash_table.DataTable(
-                    id='main-table',
-                    page_size=50,
-                    fixed_columns={'headers': True, 'data': 1},
+                    id='main-table', page_size=50, fixed_columns={'headers': True, 'data': 1},
                     style_table={'width':'100%', 'minWidth':'100%', 'overflowX':'auto'},
-                    style_cell={
-                        'textAlign':'right', 'padding':'12px 15px', 'minWidth':'140px', 
-                        'width':'140px', 'maxWidth':'140px', 'fontFamily': 'Segoe UI, sans-serif', 
-                        'color': '#334155', 'border': '1px solid #E2E8F0', 'backgroundColor': '#FFFFFF' 
-                    },
-                    style_cell_conditional=[
-                        {'if':{'column_id':'Mes'}, 'textAlign':'center', 'fontWeight':'bold', 'color': '#0B2D5B', 'backgroundColor': '#F8FAFC'},
-                    ],
-                    style_header={
-                        'backgroundColor':'#0B2D5B', 'color':'white', 'fontWeight':'700', 
-                        'textAlign':'center', 'border': '1px solid #0B2D5B'
-                    },
-                    style_data_conditional=[
-                        {'if': {'row_index': 'odd'}, 'backgroundColor': '#F8FAFC'}
-                    ],
-                    sort_action='custom',
-                    sort_mode='single',
-                    sort_by=[],
-                    page_action='native'
+                    style_cell={'textAlign':'right', 'padding':'12px 15px', 'minWidth':'140px', 'width':'140px', 'maxWidth':'140px', 'fontFamily': 'Segoe UI, sans-serif', 'color': '#334155', 'border': '1px solid #E2E8F0'},
+                    style_cell_conditional=[{'if':{'column_id':'Mes'}, 'textAlign':'center', 'fontWeight':'bold', 'color': '#0B2D5B', 'backgroundColor': '#F8FAFC'}],
+                    style_header={'backgroundColor':'#0B2D5B', 'color':'white', 'fontWeight':'700', 'textAlign':'center', 'border': '1px solid #0B2D5B'},
+                    style_data_conditional=[{'if': {'row_index': 'odd'}, 'backgroundColor': '#F8FAFC'}],
+                    sort_action='custom', sort_mode='single', sort_by=[], page_action='native'
                 )
             ]
         ),
@@ -354,58 +314,77 @@ app.layout = html.Div([
     ], style={'padding': '0 15px'}),
 
     dcc.Store(id='df-store')
-], style={
-    'width':'100%',
-    'maxWidth':'100%',
-    'margin':'0',
-    'boxSizing': 'border-box'
-})
+], style={'width':'100%', 'maxWidth':'100%', 'margin':'0', 'boxSizing': 'border-box'})
 
 
 # ---------------------- CALLBACKS ----------------------
+
 @app.callback(
     Output('df-store', 'data'),
     Output('upload-status', 'children'),
-    Output('metric-dropdown', 'options'),
-    Output('metric-dropdown', 'value'),
     Output('mes-filter', 'options'),
-    Output('columns-filter', 'options'),
     Input('upload-data', 'contents'),
     State('upload-data', 'filename')
 )
-def update_store(upload_contents, upload_names):
+def handle_upload(upload_contents, upload_names):
     if not upload_contents or not upload_names:
-        return None, '', [], None, [], []
+        return None, '', []
 
     resultados = []
-    valid_files = [(content, name) for content, name in zip(upload_contents, upload_names) if name.lower().endswith('.xlsx')]
-    if not valid_files:
-        return None, html.Div('No se encontraron archivos .xlsx válidos en la carpeta.', style={'color': '#EF4444'}), [], None, [], []
-
+    valid_files = [(c, n) for c, n in zip(upload_contents, upload_names) if n.lower().endswith('.xlsx')]
+    
     for content, name in valid_files:
         try:
-            acum, mens = procesar_archivo_bytes(content, name)
-            resultados.append(acum)
-            resultados.append(mens)
+            acum, mens, bal = procesar_archivo_bytes(content, name)
+            resultados.extend([acum, mens, bal])
         except Exception as e:
-            return None, html.Div(f"Error procesando {name}: {e}", style={'color': '#EF4444'}), [], None, [], []
+            return None, html.Div(f"Error procesando {name}: {e}", style={'color': '#EF4444'}), []
 
     df = pd.DataFrame(resultados)
     
-    # Reordenamiento de columnas (excluyendo Tipo_Reporte del frontend directo)
-    columnas_base = [c for c in df.columns if c not in ['Mes', 'Tipo_Reporte']]
-    columnas_ordenadas = ['Tipo_Reporte', 'Mes'] + columnas_base
-    df = df[columnas_ordenadas]
-    
-    metric_options = [{'label': m, 'value': m} for m in columnas_base]
+    # REORDENAMIENTO MAESTRO: Forzamos a que 'Mes' siempre quede al inicio de todo el DataFrame globalmente
+    cols = df.columns.tolist()
+    if 'Mes' in cols:
+        cols.insert(0, cols.pop(cols.index('Mes')))
+    if 'Tipo_Reporte' in cols:
+        cols.insert(0, cols.pop(cols.index('Tipo_Reporte'))) # Es interno, se ocultará, pero se queda junto a Mes
+    df = df[cols]
     
     meses_unicos = sorted(df['Mes'].unique(), key=obtener_clave_orden)
     mes_options = [{'label': m, 'value': m} for m in meses_unicos]
     
-    col_options = [{'label': c, 'value': c} for c in columnas_base]
+    status_msg = html.Div(f'✓ {len(valid_files)} archivos procesados con éxito.', style={'color': '#10B981', 'padding': '10px 0'})
+    return df.to_json(date_format='iso', orient='split'), status_msg, mes_options
+
+
+@app.callback(
+    Output('metric-dropdown', 'options'),
+    Output('metric-dropdown', 'value'),
+    Output('columns-filter', 'options'),
+    Output('columns-filter', 'value'),
+    Input('df-store', 'data'),
+    Input('report-tab', 'value')
+)
+def update_controls(df_json, tab):
+    if not df_json: return [], None, [], []
     
-    status_msg = html.Div(f'✓ {len(df) // 2} archivos procesados con éxito (Se calcularon métricas Acumuladas y Mensuales).', style={'color': '#10B981', 'padding': '10px 0'})
-    return df.to_json(date_format='iso', orient='split'), status_msg, metric_options, ('Utilidad Neta' if 'Utilidad Neta' in columnas_base else columnas_base[0]), mes_options, col_options
+    try:
+        df = pd.read_json(io.StringIO(df_json), orient='split')
+    except:
+        df = pd.read_json(df_json, orient='split')
+        
+    filtro_tipo = "Balance" if tab == "balance" else ("Acumulado" if tab == "acumulado" else "Mensual")
+    df = df[df['Tipo_Reporte'] == filtro_tipo]
+    
+    df = df.dropna(axis=1, how='all')
+    columnas_disponibles = [c for c in df.columns if c not in ['Mes', 'Tipo_Reporte']]
+    
+    metric_options = [{'label': m, 'value': m} for m in columnas_disponibles]
+    col_options = [{'label': c, 'value': c} for c in columnas_disponibles]
+    
+    default_metric = "Total Activo" if tab == "balance" else ("Utilidad Neta" if "Utilidad Neta" in columnas_disponibles else columnas_disponibles[0])
+    
+    return metric_options, default_metric, col_options, []
 
 
 @app.callback(
@@ -413,109 +392,70 @@ def update_store(upload_contents, upload_names):
     Output('main-table', 'data'),
     Output('graph-container', 'children'),
     Input('df-store', 'data'),
-    Input('report-tab', 'value'), # Entrada para saber en qué pestaña estamos
+    Input('report-tab', 'value'),
     Input('metric-dropdown', 'value'),
     Input('chart-type', 'value'),
     Input('mes-filter', 'value'),
     Input('columns-filter', 'value'),
     Input('main-table', 'sort_by')
 )
-def update_views(df_json, tab_seleccionado, metric, chart_type, meses_seleccionados, columnas_seleccionadas, sort_by):
-    if not df_json:
-        return [], [], html.Div('Esperando carga de archivos...', style={'textAlign': 'center', 'color': '#64748B', 'padding': '20px'})
+def update_views(df_json, tab, metric, chart_type, meses, cols_seleccionadas, sort_by):
+    if not df_json: return [], [], html.Div('Esperando carga...', style={'textAlign': 'center', 'color': '#64748B', 'padding': '20px'})
     
     try:
         df = pd.read_json(io.StringIO(df_json), orient='split')
-    except ValueError:
+    except:
         df = pd.read_json(df_json, orient='split')
     
-    # --- APLICACIÓN DE FILTRO POR PESTAÑA ---
-    filtro_tipo = "Acumulado" if tab_seleccionado == "acumulado" else "Mensual"
-    df = df[df['Tipo_Reporte'] == filtro_tipo]
-    df = df.drop('Tipo_Reporte', axis=1)
+    filtro_tipo = "Balance" if tab == "balance" else ("Acumulado" if tab == "acumulado" else "Mensual")
+    df = df[df['Tipo_Reporte'] == filtro_tipo].dropna(axis=1, how='all')
+    df = df.drop('Tipo_Reporte', axis=1, errors='ignore')
     
-    # Aplicación de filtros de UI
-    if meses_seleccionados and len(meses_seleccionados) > 0:
-        df = df[df['Mes'].isin(meses_seleccionados)]
-    
-    if df.empty:
-        return [], [], html.Div('Sin datos coincidentes con los filtros aplicados.', style={'color': '#EF4444', 'textAlign': 'center', 'padding': '20px'})
-    
-    # Ordenamiento
-    df['_sort_key'] = df['Mes'].apply(obtener_clave_orden)
-    
-    if sort_by and len(sort_by) > 0:
-        col_id = sort_by[0]['column_id']
-        direction = sort_by[0]['direction']
-        ascendente = (direction == 'asc')
+    if meses and len(meses) > 0:
+        df = df[df['Mes'].isin(meses)]
         
-        if col_id == 'Mes':
-            df = df.sort_values('_sort_key', ascending=ascendente)
-        else:
-            df = df.sort_values(col_id, ascending=ascendente)
+    if df.empty: return [], [], html.Div('Sin datos con los filtros actuales.', style={'color': '#EF4444', 'textAlign': 'center'})
+    
+    df['_sort_key'] = df['Mes'].apply(obtener_clave_orden)
+    if sort_by and len(sort_by) > 0:
+        col = sort_by[0]['column_id']
+        asc = (sort_by[0]['direction'] == 'asc')
+        df = df.sort_values('_sort_key' if col == 'Mes' else col, ascending=asc)
     else:
         df = df.sort_values('_sort_key', ascending=True)
-
     df = df.drop('_sort_key', axis=1)
 
-    # Selección de columnas
+    # AQUÍ ASEGURAMOS QUE MES SE MANTENGA A LA IZQUIERDA EN LA VISTA FINAL
     display_df = df.copy()
-    if columnas_seleccionadas and len(columnas_seleccionadas) > 0:
-        columnas_a_mostrar = ['Mes'] + columnas_seleccionadas
-        display_df = display_df[columnas_a_mostrar]
+    if cols_seleccionadas:
+        display_df = display_df[['Mes'] + cols_seleccionadas]
+    else:
+        cols_finales = display_df.columns.tolist()
+        if 'Mes' in cols_finales:
+            cols_finales.insert(0, cols_finales.pop(cols_finales.index('Mes')))
+        display_df = display_df[cols_finales]
 
-    # Formateo de columnas para Dash Table
     columns_table = []
     for c in display_df.columns:
         if c == "Mes":
             columns_table.append({"name": c, "id": c, "type": "text"})
         elif "%" in c:
-            columns_table.append({
-                "name": c, "id": c, "type": "numeric",
-                "format": Format(precision=2, scheme=Scheme.percentage)
-            })
+            columns_table.append({"name": c, "id": c, "type": "numeric", "format": Format(precision=2, scheme=Scheme.percentage)})
         else:
-            columns_table.append({
-                "name": c, "id": c, "type": "numeric",
-                "format": Format(precision=2, scheme=Scheme.fixed, group=Group.yes, symbol=Symbol.yes)
-            })
+            columns_table.append({"name": c, "id": c, "type": "numeric", "format": Format(precision=2, scheme=Scheme.fixed, group=Group.yes, symbol=Symbol.yes)})
 
-    # Gráfica
     fig = None
     if metric and metric in df.columns and not df.empty:
-        df_graph = df.sort_values(by='Mes', key=lambda col: col.apply(obtener_clave_orden))
-        x = df_graph['Mes'].tolist()
-        y = df_graph[metric].tolist()
+        df_graph = df.sort_values(by='Mes', key=lambda x: x.apply(obtener_clave_orden))
+        x, y = df_graph['Mes'].tolist(), df_graph[metric].tolist()
         
         if chart_type == 'lines':
-            fig = go.Figure(go.Scatter(
-                x=x, y=y, 
-                mode='lines+markers', 
-                marker={'size': 9, 'color': '#C9A227', 'line': {'width': 2, 'color': '#0B2D5B'}}, 
-                line={'color':'#0B2D5B', 'width': 3}
-            ))
+            fig = go.Figure(go.Scatter(x=x, y=y, mode='lines+markers', marker={'size': 9, 'color': '#C9A227', 'line': {'width': 2, 'color': '#0B2D5B'}}, line={'color':'#0B2D5B', 'width': 3}))
         else:
-            fig = go.Figure(go.Bar(
-                x=x, y=y, 
-                marker_color='#0B2D5B',
-                marker_line_color='#C9A227',
-                marker_line_width=1.5
-            ))
+            fig = go.Figure(go.Bar(x=x, y=y, marker_color='#0B2D5B', marker_line_color='#C9A227', marker_line_width=1.5))
 
-        if '%' in metric:
-            fig.update_yaxes(tickformat='.1%')
-        else:
-            fig.update_yaxes(tickprefix='$', separatethousands=True)
-
-        fig.update_layout(
-            title={'text': f"Análisis Histórico ({filtro_tipo}): {metric}", 'font': {'size': 18, 'color': '#0B2D5B', 'family': 'Segoe UI'}},
-            margin={'t':50,'b':40, 'l': 60, 'r': 40}, 
-            hovermode='x unified',
-            plot_bgcolor='#FFFFFF',
-            paper_bgcolor='#FFFFFF',
-            xaxis={'gridcolor': '#F1F5F9'},
-            yaxis={'gridcolor': '#F1F5F9'}
-        )
+        fig.update_yaxes(tickformat='.1%' if '%' in metric else '$,')
+        fig.update_layout(title={'text': f"Evolución de {metric} ({filtro_tipo})", 'font': {'size': 18, 'color': '#0B2D5B', 'family': 'Segoe UI'}}, margin={'t':50,'b':40, 'l': 60, 'r': 40}, hovermode='x unified', plot_bgcolor='#FFFFFF', paper_bgcolor='#FFFFFF', xaxis={'gridcolor': '#F1F5F9'}, yaxis={'gridcolor': '#F1F5F9'})
 
     graph = dcc.Graph(figure=fig, config={'displayModeBar': False}) if fig else html.Div()
 
