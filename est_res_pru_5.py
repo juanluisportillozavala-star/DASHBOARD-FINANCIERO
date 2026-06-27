@@ -233,7 +233,7 @@ def procesar_archivo_bytes(content, filename):
     # LÓGICAS NUEVAS APLICADAS AQUÍ:
     # -----------------------------------------------------
     otras_cxc = calcular_otras_cuentas_cobrar(df, CATALOGO_BALANCE['Otras_CxC_Grupos'])
-    res_acumulados = obtener_resultados_acumulados(df)(df, CATALOGO_BALANCE['Resultados_Acumulados_Grupos'])
+    res_acumulados = obtener_resultados_acumulados(df)
     
     activo_circulante = efectivo + cxc + inventarios + imp_recuperar + otras_cxc
     
