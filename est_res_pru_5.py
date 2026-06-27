@@ -22,7 +22,7 @@ def encode_image(path):
 
 logo_base64 = encode_image(PATH_DEL_LOGO)
 
-# ==================== DICCIONARIO DE MESES ====================
+# ==================== DICCIONARIO DE MESES (ORDEN CRONOLÓGICO) ====================
 MESES_ORDEN = {
     'ENERO': 1, 'FEBRERO': 2, 'MARZO': 3, 'ABRIL': 4, 
     'MAYO': 5, 'JUNIO': 6, 'JULIO': 7, 'AGOSTO': 8, 
@@ -44,9 +44,6 @@ CATALOGO_BALANCE = {
     'Inventarios': ['115.01.001', '115.01.002', '115.01.003'], 
     'Impuestos_por_Recuperar': ['113.01.001', '114.01.001', '118.01.001', '119.01.001', '119.01.003'],
     
-    # SE ACTUALIZAN CON LOS CÓDIGOS ESPECÍFICOS QUE COMPONEN TUS GRUPOS
-    'Otras_CxC_Grupos': ['107.01', '107.05', '120.01', '184.01', '899.01'], 
-    
     'Equipo_de_Computo': ['154.01.001', '154.01.002', '156.01.001'],
     'Depreciacion_Acumulada': ['171.03.001', '171.03.002', '171.05.001'],
     
@@ -58,19 +55,20 @@ CATALOGO_BALANCE = {
     ],
     'Otros_Pasivos': ['205.02.001', '205.06.002', '206.01.001', '210.01.001'],
     
-    'Capital_Social': ['301.01.001'],
-    'Resultados_Acumulados_Grupos': ['304.01', '304.02'] 
+    'Capital_Social': ['301.01.001']
 }
 
 # ---------------------- LÓGICA DE PROCESAMIENTO CONTABLE ----------------------
 
+# --- Lógica 1: Para Reporte Acumulado ---
 def obtener_valor(df, cuenta, columna):
     for i in range(len(df)):
         valor_cuenta = str(df.iat[i, 1]).strip()
         if valor_cuenta.lower() == cuenta.lower():
-            valor = df.iat[i, columna]
-            if pd.isna(valor): return 0.0
-            return float(valor)
+            try:
+                return float(df.iat[i, columna])
+            except:
+                return 0.0
     return 0.0
 
 def obtener_704_04(df, columna):
@@ -78,17 +76,25 @@ def obtener_704_04(df, columna):
     for i in range(len(df)):
         valor_cuenta = str(df.iat[i, 1]).strip()
         if texto_busqueda in valor_cuenta:
-            valor = df.iat[i, columna]
-            if pd.isna(valor): return 0.0
-            return float(valor)
+            try:
+                return float(df.iat[i, columna])
+            except:
+                return 0.0
     return 0.0
 
+# --- Lógica 2: Para Reporte Mensual ---
 def obtener_movimiento_neto(df, cuenta, es_acreedora=False):
     for i in range(len(df)):
         valor_cuenta = str(df.iat[i, 1]).strip()
         if valor_cuenta.lower() == cuenta.lower():
-            cargo = float(df.iat[i, 4]) if not pd.isna(df.iat[i, 4]) else 0.0
-            abono = float(df.iat[i, 5]) if not pd.isna(df.iat[i, 5]) else 0.0
+            try:
+                cargo = float(df.iat[i, 4])
+            except:
+                cargo = 0.0
+            try:
+                abono = float(df.iat[i, 5])
+            except:
+                abono = 0.0
             return (abono - cargo) if es_acreedora else (cargo - abono)
     return 0.0
 
@@ -97,77 +103,91 @@ def obtener_704_04_neto(df, es_acreedora=False):
     for i in range(len(df)):
         valor_cuenta = str(df.iat[i, 1]).strip()
         if texto_busqueda in valor_cuenta:
-            cargo = float(df.iat[i, 4]) if not pd.isna(df.iat[i, 4]) else 0.0
-            abono = float(df.iat[i, 5]) if not pd.isna(df.iat[i, 5]) else 0.0
+            try:
+                cargo = float(df.iat[i, 4])
+            except:
+                cargo = 0.0
+            try:
+                abono = float(df.iat[i, 5])
+            except:
+                abono = 0.0
             return (abono - cargo) if es_acreedora else (cargo - abono)
     return 0.0
 
+# --- Lógica 3: Para Balance General (Busca por Código Exacto) ---
 def obtener_saldo_exacto(df, lista_codigos_exactos, es_acreedora=False):
     total_debe = 0.0
     total_haber = 0.0
     for i in range(len(df)):
         codigo = str(df.iat[i, 0]).strip()
         if codigo in lista_codigos_exactos:
-            debe = df.iat[i, 6]
-            haber = df.iat[i, 7]
-            if pd.notna(debe) and isinstance(debe, (int, float)): total_debe += float(debe)
-            if pd.notna(haber) and isinstance(haber, (int, float)): total_haber += float(haber)
+            try:
+                debe = float(df.iat[i, 6])
+            except:
+                debe = 0.0
+            try:
+                haber = float(df.iat[i, 7])
+            except:
+                haber = 0.0
+                
+            total_debe += debe
+            total_haber += haber
                 
     return (total_haber - total_debe) if es_acreedora else (total_debe - total_haber)
 
-# --- NUEVAS FUNCIONES ESPECÍFICAS SOLICITADAS POR EL USUARIO ---
-
-def calcular_otras_cuentas_cobrar(df, grupos):
+# ----------------------------------------------------------------------
+# FUNCIONES MATEMÁTICAS ESPECÍFICAS SOLICITADAS 
+# ----------------------------------------------------------------------
+def calcular_otras_cuentas_cobrar(df):
     """
-    Suma columna G (Débito Final) y resta columna H (Crédito Final)
-    buscando la coincidencia exacta de que el código empiece con los grupos.
+    Suma columna G y resta columna H de las cuentas indicadas.
+    107.01, 107.05, 120.01, 184.01, 899.01
     """
     total = 0.0
     for i in range(len(df)):
         codigo = str(df.iat[i, 0]).strip()
-        # Verificamos si la cuenta pertenece a alguno de los grupos dados (ej. 107.01)
-        if pd.notna(df.iat[i, 0]) and codigo != 'nan' and codigo != '':
-            if any(codigo.startswith(grupo) for grupo in grupos):
-                g_debito = df.iat[i, 6]
-                h_credito = df.iat[i, 7]
-                
-                g_val = float(g_debito) if pd.notna(g_debito) and isinstance(g_debito, (int, float)) else 0.0
-                h_val = float(h_credito) if pd.notna(h_credito) and isinstance(h_credito, (int, float)) else 0.0
-                
-                # Fórmula exacta solicitada: Suma G, Resta H (+ G - H)
-                total += (g_val - h_val)
+        
+        try:
+            g_val = float(df.iat[i, 6])
+        except:
+            g_val = 0.0
+            
+        try:
+            h_val = float(df.iat[i, 7])
+        except:
+            h_val = 0.0
+            
+        if codigo.startswith('107.01') or codigo.startswith('107.05') or codigo.startswith('120.01') or codigo.startswith('184.01') or codigo.startswith('899.01'):
+            total += (g_val - h_val)
+            
     return total
 
-def calcular_resultados_acumulados(df, grupos):
+def calcular_resultados_acumulados(df):
     """
-    Para cuentas 304.01 y 304.02: Suma columna H (Crédito) y resta columna G (Débito).
-    Adicionalmente, resta la columna H donde el nombre diga 'GANACIAS/PERDIDAS NO DISTRIBUIDAS'.
+    1. Cuentas 304.01 y 304.02: Suma H y resta G.
+    2. GANANCIAS/PERDIDAS NO DISTRIBUIDAS: Restar H.
     """
     total = 0.0
-    
-    # 1. Suma H y resta G para las cuentas 304.xx
     for i in range(len(df)):
         codigo = str(df.iat[i, 0]).strip()
-        if pd.notna(df.iat[i, 0]) and codigo != 'nan' and codigo != '':
-            if any(codigo.startswith(grupo) for grupo in grupos):
-                g_debito = df.iat[i, 6]
-                h_credito = df.iat[i, 7]
-                
-                g_val = float(g_debito) if pd.notna(g_debito) and isinstance(g_debito, (int, float)) else 0.0
-                h_val = float(h_credito) if pd.notna(h_credito) and isinstance(h_credito, (int, float)) else 0.0
-                
-                # Fórmula solicitada: Suma H, Resta G (+ H - G)
-                total += (h_val - g_val)
-                
-    # 2. Restar columna H para 'GANACIAS/PERDIDAS NO DISTRIBUIDAS'
-    for i in range(len(df)):
-        nombre_cuenta = str(df.iat[i, 1]).strip().upper()
-        # Buscamos variaciones del texto como "GANACIAS" o "GANANCIAS"
-        if "NO DISTRIBUIDAS" in nombre_cuenta and ("GANANCIA" in nombre_cuenta or "GANACIA" in nombre_cuenta or "PERDIDA" in nombre_cuenta):
-            h_credito = df.iat[i, 7]
-            h_val = float(h_credito) if pd.notna(h_credito) and isinstance(h_credito, (int, float)) else 0.0
+        nombre = str(df.iat[i, 1]).strip().upper()
+        
+        try:
+            g_val = float(df.iat[i, 6])
+        except:
+            g_val = 0.0
             
-            # Fórmula solicitada: Restar H
+        try:
+            h_val = float(df.iat[i, 7])
+        except:
+            h_val = 0.0
+            
+        # Regla 1: 304.01 y 304.02 (+ H - G)
+        if codigo.startswith('304.01') or codigo.startswith('304.02'):
+            total += (h_val - g_val)
+            
+        # Regla 2: GANANCIAS/PERDIDAS NO DISTRIBUIDAS (- H)
+        if "NO DISTRIBUIDAS" in nombre and ("GANANCIA" in nombre or "GANACIA" in nombre or "PERDIDA" in nombre):
             total -= h_val
             
     return total
@@ -181,7 +201,7 @@ def procesar_archivo_bytes(content, filename):
     mes_nombre = os.path.splitext(os.path.basename(filename))[0]
 
     # ==========================================
-    # 1. ESTADO DE RESULTADOS (ACUMULADO)
+    # 1. CÁLCULO ESTADO DE RESULTADOS (ACUMULADO)
     # ==========================================
     ingresos_acum = obtener_valor(df, "4 Ingresos", 7) + obtener_704_04(df, 7)
     costos_acum = obtener_valor(df, "5 Costos", 6)
@@ -207,7 +227,7 @@ def procesar_archivo_bytes(content, filename):
     }
 
     # ==========================================
-    # 2. ESTADO DE RESULTADOS (MENSUAL)
+    # 2. CÁLCULO ESTADO DE RESULTADOS (MENSUAL)
     # ==========================================
     ingresos_mes = obtener_movimiento_neto(df, "4 Ingresos", es_acreedora=True) + obtener_704_04_neto(df, es_acreedora=True)
     costos_mes = obtener_movimiento_neto(df, "5 Costos", es_acreedora=False)
@@ -233,18 +253,16 @@ def procesar_archivo_bytes(content, filename):
     }
 
     # ==========================================
-    # 3. BALANCE GENERAL (POSICIÓN FINANCIERA)
+    # 3. CÁLCULO BALANCE GENERAL (POSICIÓN FINANCIERA)
     # ==========================================
     efectivo = obtener_saldo_exacto(df, CATALOGO_BALANCE['Efectivo'])
     cxc = obtener_saldo_exacto(df, CATALOGO_BALANCE['Cuentas_por_Cobrar'])
     inventarios = obtener_saldo_exacto(df, CATALOGO_BALANCE['Inventarios'])
     imp_recuperar = obtener_saldo_exacto(df, CATALOGO_BALANCE['Impuestos_por_Recuperar'])
     
-    # -----------------------------------------------------
-    # LÓGICAS NUEVAS APLICADAS AQUÍ:
-    # -----------------------------------------------------
-    otras_cxc = calcular_otras_cuentas_cobrar(df, CATALOGO_BALANCE['Otras_CxC_Grupos'])
-    res_acumulados = calcular_resultados_acumulados(df, CATALOGO_BALANCE['Resultados_Acumulados_Grupos'])
+    # === APLICACIÓN DE LAS NUEVAS LÓGICAS EXACTAS ===
+    otras_cxc = calcular_otras_cuentas_cobrar(df)
+    res_acumulados = calcular_resultados_acumulados(df)
     
     activo_circulante = efectivo + cxc + inventarios + imp_recuperar + otras_cxc
     
@@ -332,7 +350,7 @@ app.layout = html.Div([
         html.Div([
             html.Img(src=f"data:image/png;base64,{logo_base64}" if logo_base64 else "", style={'height': '60px', 'marginRight': '20px', 'display': 'inline-block' if logo_base64 else 'none', 'backgroundColor': 'white', 'padding': '5px', 'borderRadius': '6px'}),
             html.Div([
-                html.H2("REPORTE FINANCIERO INTEGRAL", style={'color': '#FFFFFF', 'margin': '0', 'fontWeight': '700', 'fontSize': '26px', 'letterSpacing': '0.5px'}),
+                html.H2("REPORTE FINANCIERO INTEGRAL 2026", style={'color': '#FFFFFF', 'margin': '0', 'fontWeight': '700', 'fontSize': '26px', 'letterSpacing': '0.5px'}),
                 html.Div("Resultados y Posición Financiera (Balance General)", style={'color': '#C9A227', 'fontSize': '13px', 'fontWeight': '5px', 'marginTop': '2px'})
             ], style={'display': 'inline-block', 'verticalAlign': 'middle'})
         ], style={'display': 'flex', 'alignItems': 'center'})
@@ -351,7 +369,7 @@ app.layout = html.Div([
 
     html.Div(id='upload-status', style={'padding': '0 15px', 'fontWeight': '600', 'color': '#1E293B'}),
 
-    # FILTROS Y CONTROLES
+    # FILTROS Y CONTROLES (SE MANTIENEN EN LA PARTE SUPERIOR)
     html.Div([
         html.Div([
             html.Label('Filtrar por Mes', style={'fontWeight': '600', 'color': '#1E293B', 'marginBottom': '6px', 'display': 'block'}), 
@@ -426,18 +444,18 @@ def handle_upload(upload_contents, upload_names):
 
     df = pd.DataFrame(resultados)
     
-    # REORDENAMIENTO MAESTRO: Forzamos a que 'Mes' siempre quede al inicio de todo el DataFrame globalmente
+    # REORDENAMIENTO MAESTRO: Forzamos a que 'Mes' siempre quede al inicio a la izquierda
     cols = df.columns.tolist()
     if 'Mes' in cols:
         cols.insert(0, cols.pop(cols.index('Mes')))
     if 'Tipo_Reporte' in cols:
-        cols.insert(0, cols.pop(cols.index('Tipo_Reporte'))) 
+        cols.insert(0, cols.pop(cols.index('Tipo_Reporte')))
     df = df[cols]
     
     meses_unicos = sorted(df['Mes'].unique(), key=obtener_clave_orden)
     mes_options = [{'label': m, 'value': m} for m in meses_unicos]
     
-    status_msg = html.Div(f'✓ {len(valid_files)} archivos procesados con éxito. Balance calculado con reglas actualizadas.', style={'color': '#10B981', 'padding': '10px 0'})
+    status_msg = html.Div(f'✓ {len(valid_files)} archivos procesados con éxito. Balanza analizada matemáticamente.', style={'color': '#10B981', 'padding': '10px 0'})
     return df.to_json(date_format='iso', orient='split'), status_msg, mes_options
 
 
@@ -509,7 +527,7 @@ def update_views(df_json, tab, metric, chart_type, meses, cols_seleccionadas, so
         df = df.sort_values('_sort_key', ascending=True)
     df = df.drop('_sort_key', axis=1)
 
-    # AQUÍ ASEGURAMOS QUE MES SE MANTENGA A LA IZQUIERDA EN LA VISTA FINAL
+    # REGLA ESTRICTA: MES SE MANTIENE A LA IZQUIERDA
     display_df = df.copy()
     if cols_seleccionadas:
         display_df = display_df[['Mes'] + cols_seleccionadas]
