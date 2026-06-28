@@ -146,8 +146,11 @@ def obtener_resultados_acumulados(df):
 
         cuenta = str(df.iat[i,1]).strip().upper()
 
-        debe = float(df.iat[i,6]) if pd.notna(df.iat[i,6]) else 0.0
-        haber = float(df.iat[i,7]) if pd.notna(df.iat[i,7]) else 0.0
+        debe = pd.to_numeric(df.iat[i,6], errors="coerce")
+        haber = pd.to_numeric(df.iat[i,7], errors="coerce")
+
+        debe = 0.0 if pd.isna(debe) else float(debe)
+        haber = 0.0 if pd.isna(haber) else float(haber)
 
         # 304.01
         if cuenta.startswith("304.01"):
