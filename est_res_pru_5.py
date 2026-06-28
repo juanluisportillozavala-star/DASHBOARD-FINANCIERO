@@ -153,12 +153,11 @@ def obtener_resultados_acumulados(df):
         haber = 0.0 if pd.isna(haber) else float(haber)
 
         # 304.01
-        if cuenta.startswith("304.01"):
-            total += (haber - debe)
+        if cuenta == "304.01 UTILIDAD DE EJERCICIOS ANTERIORES":
+            total += haber - debe
 
-        # 304.02
-        elif cuenta.startswith("304.02"):
-            total += (haber - debe)
+        elif cuenta == "304.02 PÉRDIDA DE EJERCICIOS ANTERIORES":
+            total += haber - debe
 
         # GANANCIAS/PÉRDIDAS NO DISTRIBUIDAS
         elif cuenta == "GANANCIAS/PERDIDAS NO DISTRIBUIDAS":
