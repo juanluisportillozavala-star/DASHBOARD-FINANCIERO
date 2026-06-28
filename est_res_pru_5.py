@@ -144,23 +144,31 @@ def obtener_resultados_acumulados(df):
 
     for i in range(len(df)):
 
-        cuenta = str(df.iat[i,1]).strip().upper()
+        codigo = str(df.iat[i, 0]).strip()
+        cuenta = str(df.iat[i, 1]).strip().upper()
 
-        debe = pd.to_numeric(df.iat[i,6], errors="coerce")
-        haber = pd.to_numeric(df.iat[i,7], errors="coerce")
+        # Columna G (Débito) y Columna H (Crédito)
+        debe = pd.to_numeric(df.iat[i, 6], errors="coerce")
+        haber = pd.to_numeric(df.iat[i, 7], errors="coerce")
 
         debe = 0.0 if pd.isna(debe) else float(debe)
         haber = 0.0 if pd.isna(haber) else float(haber)
 
-        # 304.01
-        if cuenta == "304.01 UTILIDAD DE EJERCICIOS ANTERIORES":
-            total += haber - debe
+        # 1. Validación por CÓDIGO (Columna 0) para evitar problemas de texto
+        if codigo != 'nan' and codigo != '':
+            
+            # 304.01: Suma H y resta G
+            if codigo.startswith("304.01"):
+                total += (haber - debe)
 
-        elif cuenta == "304.02 PÉRDIDA DE EJERCICIOS ANTERIORES":
-            total += haber - debe
+            # 304.02: Suma H y resta G
+            elif codigo.startswith("304.02"):
+                total += (haber - debe)
 
-        # GANANCIAS/PÉRDIDAS NO DISTRIBUIDAS
-        elif cuenta == "GANANCIAS/PERDIDAS NO DISTRIBUIDAS":
+        # 2. Validación por NOMBRE (Columna 1) para GANANCIAS/PÉRDIDAS
+        # Usamos 'in' para atrapar variaciones como "GANACIAS" sin 'N'
+        if "NO DISTRIBUIDAS" in cuenta and ("GANANCIA" in cuenta or "GANACIA" in cuenta or "PERDIDA" in cuenta):
+            # OJO: Cambiado a 'haber' (Columna H) cumpliendo tu instrucción
             total -= debe
 
     return total
