@@ -144,21 +144,18 @@ def obtener_resultados_acumulados(df):
 
     for i in range(len(df)):
 
-        descripcion = str(df.iat[i,1]).strip().upper()
+        cuenta = str(df.iat[i,1]).strip().upper()
 
-        debe = df.iat[i,6] if pd.notna(df.iat[i,6]) else 0.0
-        haber = df.iat[i,7] if pd.notna(df.iat[i,7]) else 0.0
+        debe = float(df.iat[i,6]) if pd.notna(df.iat[i,6]) else 0.0
+        haber = float(df.iat[i,7]) if pd.notna(df.iat[i,7]) else 0.0
 
-        # 304.01
-        if descripcion.startswith("304.01"):
-            total += haber - debe
+        if cuenta.startswith("304.01"):
+            total += (haber - debe)
 
-        # 304.02
-        elif descripcion.startswith("304.02"):
-            total += haber - debe
+        elif cuenta.startswith("304.02"):
+            total += (haber - debe)
 
-        # GANANCIAS/PERDIDAS NO DISTRIBUIDAS
-        elif descripcion == "GANANCIAS/PERDIDAS NO DISTRIBUIDAS":
+        elif cuenta == "GANANCIAS/PERDIDAS NO DISTRIBUIDAS":
             total -= haber
 
     return total
