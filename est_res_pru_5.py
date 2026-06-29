@@ -421,14 +421,15 @@ app.layout = html.Div([
                     id='main-table', page_size=50,
                     fixed_columns={'headers': True, 'data': 1},
                     fixed_rows={'headers': True},
-                    dangerously_allow_html=True,
+                    markdown_options={"html": True},
                     style_table={'width':'100%', 'minWidth':'100%', 'overflowX':'auto', 'maxHeight':'600px', 'overflowY':'auto'},
                     style_cell={
                         'textAlign':'left', 'padding':'10px 14px',
                         'minWidth':'165px', 'width':'165px', 'maxWidth':'165px',
                         'fontFamily': 'Segoe UI, sans-serif', 'fontSize': '13px',
                         'fontWeight': '700', 'color': '#1E293B',
-                        'border': '1px solid #E2E8F0', 'overflow': 'hidden'
+                        'border': '1px solid #E2E8F0', 'whiteSpace': 'nowrap',
+                        'overflow': 'hidden'
                     },
                     style_cell_conditional=[
                         {'if':{'column_id':'Concepto'},
@@ -647,25 +648,28 @@ def update_views(df_json, tab, balance_subtab, metric, chart_type, meses, cols_s
     pct_concepto_indices = [i for i, r in enumerate(display_df['Concepto'].tolist()) if '%' in str(r)]
     mes_cols = [c for c in display_df.columns if c != 'Concepto']
  
-    # CRÍTICO: convertir todas las columnas de mes a object (string) ANTES de asignar texto,
-    # de lo contrario pandas silenciosamente convierte los strings de vuelta a float.
+    # CRÍTICO: convertir todas las columnas de mes a object ANTES de asignar strings
     for col in mes_cols:
         display_df[col] = display_df[col].astype(object)
  
-    # Formatear TODAS las celdas como strings con el signo correcto:
-    #   - Filas de %: "45.23%" (multiplicar x100)
-    #   - Filas de dinero: el $ va al extremo izquierdo y el número al extremo derecho,
-    #     igual que Excel. Se logra con HTML dentro de la celda usando dangerouslyAllowHTML.
-    #     Formato: <span style="float:left">$</span><span style="float:right">1,234.56</span>
-    def fmt_peso_html(num):
+    # Formatear celdas como HTML inline (permitido via markdown_options html:True):
+    #   - Dinero: <div style="display:flex;justify-content:space-between"><b>$</b><b>1,234.56</b></div>
+    #     → $ fijo a la izquierda, número a la derecha, igual que Excel
+    #   - Porcentaje: "45.23%" centrado en negrita
+    #   - Negativos: signo menos antes del número (no paréntesis)
+    def fmt_peso(num):
         if num < 0:
             numero_str = f"-{abs(num):,.2f}"
         else:
             numero_str = f"{num:,.2f}"
-        return f'<span style="float:left;font-weight:700">$</span><span style="float:right;font-weight:700">{numero_str}</span>'
+        return (
+            '<div style="display:flex;justify-content:space-between;'
+            'font-weight:700;width:100%;">'
+            f'<span>$</span><span>{numero_str}</span></div>'
+        )
  
-    def fmt_pct_html(num):
-        return f'<span style="font-weight:700">{num * 100:,.2f}%</span>'
+    def fmt_pct(num):
+        return f'<div style="text-align:right;font-weight:700">{num * 100:,.2f}%</div>'
  
     for i, row_concepto in enumerate(display_df['Concepto'].tolist()):
         es_pct = '%' in str(row_concepto)
@@ -677,17 +681,20 @@ def update_views(df_json, tab, balance_subtab, metric, chart_type, meses, cols_s
                     continue
                 num = float(raw)
                 if es_pct:
-                    display_df.at[i, col] = fmt_pct_html(num)
+                    display_df.at[i, col] = fmt_pct(num)
                 else:
-                    display_df.at[i, col] = fmt_peso_html(num)
+                    display_df.at[i, col] = fmt_peso(num)
             except (ValueError, TypeError):
                 display_df.at[i, col] = str(raw) if raw is not None else '-'
  
-    # Todas las columnas son tipo text (ya son strings formateados)
+    # Concepto: tipo text. Columnas de mes: presentation='markdown' para renderizar HTML inline
     columns_table = []
     for c in display_df.columns:
-        columns_table.append({"name": "Concepto" if c == "Concepto" else c,
-                               "id": c, "type": "text"})
+        if c == 'Concepto':
+            columns_table.append({"name": "Concepto", "id": c, "type": "text"})
+        else:
+            columns_table.append({"name": c, "id": c, "type": "text",
+                                   "presentation": "markdown"})
  
     fig = None
     if metric and metric in df.columns and not df.empty:
