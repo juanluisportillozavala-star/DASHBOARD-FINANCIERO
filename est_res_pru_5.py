@@ -419,10 +419,9 @@ app.layout = html.Div([
                     fixed_columns={'headers': True, 'data': 1},
                     fixed_rows={'headers': True},
                     style_table={'width':'100%', 'minWidth':'100%', 'overflowX':'auto', 'maxHeight':'600px', 'overflowY':'auto'},
-                    style_cell={'textAlign':'right', 'padding':'12px 15px', 'minWidth':'150px', 'width':'150px', 'maxWidth':'150px', 'fontFamily': 'Segoe UI, sans-serif', 'color': '#334155', 'border': '1px solid #E2E8F0'},
+                    style_cell={'textAlign':'right', 'padding':'10px 16px', 'minWidth':'160px', 'width':'160px', 'maxWidth':'160px', 'fontFamily': 'Courier New, monospace', 'color': '#334155', 'border': '1px solid #E2E8F0'},
                     style_cell_conditional=[
-                        {'if':{'column_id':'Concepto'}, 'textAlign':'left', 'fontWeight':'bold', 'color': '#0B2D5B', 'backgroundColor': '#F8FAFC', 'minWidth':'220px', 'width':'220px', 'maxWidth':'220px'},
-                        {'if':{'filter_query':'{Concepto} contains "%"'}, 'color': '#64748B', 'fontStyle': 'italic'}
+                        {'if':{'column_id':'Concepto'}, 'textAlign':'left', 'fontWeight':'bold', 'color': '#0B2D5B', 'backgroundColor': '#F8FAFC', 'minWidth':'230px', 'width':'230px', 'maxWidth':'230px', 'fontFamily': 'Segoe UI, sans-serif'},
                     ],
                     style_header={'backgroundColor':'#0B2D5B', 'color':'white', 'fontWeight':'700', 'textAlign':'center', 'border': '1px solid #0B2D5B'},
                     style_data_conditional=[{'if': {'row_index': 'odd'}, 'backgroundColor': '#F8FAFC'}],
@@ -631,30 +630,37 @@ def update_views(df_json, tab, balance_subtab, metric, chart_type, meses, cols_s
     pct_concepto_indices = [i for i, r in enumerate(display_df['Concepto'].tolist()) if '%' in str(r)]
     mes_cols = [c for c in display_df.columns if c != 'Concepto']
  
-    # Formatear TODAS las celdas como texto con el signo correcto:
-    #   - Filas de porcentaje: "45.23 %" (multiplicar x100 y agregar signo %)
-    #   - Filas de dinero: "$ 1,234,567.89" (con $ a la izquierda, separadores de miles, 2 decimales)
+    # CRÍTICO: convertir todas las columnas de mes a object (string) ANTES de asignar texto,
+    # de lo contrario pandas silenciosamente convierte los strings de vuelta a float.
+    for col in mes_cols:
+        display_df[col] = display_df[col].astype(object)
+ 
+    # Formatear TODAS las celdas como strings con el signo correcto:
+    #   - Filas de %: "45.23%" (multiplicar x100)
+    #   - Filas de dinero: "$  1,234,567.89" ($ fijo a la izquierda, separador de miles, 2 dec)
+    def fmt_peso(num):
+        if num < 0:
+            return f"$  ({abs(num):>14,.2f})"
+        return f"$   {num:>14,.2f}"
+ 
     for i, row_concepto in enumerate(display_df['Concepto'].tolist()):
         es_pct = '%' in str(row_concepto)
         for col in mes_cols:
-            v = display_df.at[i, col]
-            if pd.isna(v) or v == '' or v is None:
-                display_df.at[i, col] = '-'
-                continue
+            raw = display_df.at[i, col]
+            # Extraer el número flotante original (puede ser float, int, str o NaN)
             try:
-                num = float(v)
+                if raw is None or (isinstance(raw, float) and pd.isna(raw)):
+                    display_df.at[i, col] = '-'
+                    continue
+                num = float(raw)
                 if es_pct:
-                    display_df.at[i, col] = f"{num * 100:,.2f} %"
+                    display_df.at[i, col] = f"{num * 100:,.2f}%"
                 else:
-                    # Formato tipo Excel con $ fijo a la izquierda y separador de miles
-                    if num < 0:
-                        display_df.at[i, col] = f"$ ({abs(num):,.2f})"
-                    else:
-                        display_df.at[i, col] = f"$ {num:,.2f}"
+                    display_df.at[i, col] = fmt_peso(num)
             except (ValueError, TypeError):
-                pass
+                display_df.at[i, col] = str(raw) if raw is not None else '-'
  
-    # Todas las columnas son tipo text porque ya formateamos los valores como strings
+    # Todas las columnas son tipo text (ya son strings formateados)
     columns_table = []
     for c in display_df.columns:
         columns_table.append({"name": "Concepto" if c == "Concepto" else c,
