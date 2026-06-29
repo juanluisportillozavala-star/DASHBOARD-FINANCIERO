@@ -306,6 +306,9 @@ app.index_string = """
         html, body, #react-entry-point { width: 100%; height: 100%; margin: 0; padding: 0; background-color: #F8FAFC; font-family: 'Segoe UI', system-ui, -apple-system, sans-serif; }
         .dash-table-container { width: 100% !important; }
         .Select-control { border: 1px solid #E2E8F0 !important; border-radius: 8px !important; }
+        /* Celda de dinero: $ a la izquierda, número a la derecha, igual que Excel */
+        .dash-cell div { overflow: hidden; }
+        .dash-cell div span { display: inline; }
     </style>
 </head>
 <body>
@@ -418,12 +421,26 @@ app.layout = html.Div([
                     id='main-table', page_size=50,
                     fixed_columns={'headers': True, 'data': 1},
                     fixed_rows={'headers': True},
+                    dangerously_allow_html=True,
                     style_table={'width':'100%', 'minWidth':'100%', 'overflowX':'auto', 'maxHeight':'600px', 'overflowY':'auto'},
-                    style_cell={'textAlign':'right', 'padding':'10px 16px', 'minWidth':'160px', 'width':'160px', 'maxWidth':'160px', 'fontFamily': 'Courier New, monospace', 'color': '#334155', 'border': '1px solid #E2E8F0'},
+                    style_cell={
+                        'textAlign':'left', 'padding':'10px 14px',
+                        'minWidth':'165px', 'width':'165px', 'maxWidth':'165px',
+                        'fontFamily': 'Segoe UI, sans-serif', 'fontSize': '13px',
+                        'fontWeight': '700', 'color': '#1E293B',
+                        'border': '1px solid #E2E8F0', 'overflow': 'hidden'
+                    },
                     style_cell_conditional=[
-                        {'if':{'column_id':'Concepto'}, 'textAlign':'left', 'fontWeight':'bold', 'color': '#0B2D5B', 'backgroundColor': '#F8FAFC', 'minWidth':'230px', 'width':'230px', 'maxWidth':'230px', 'fontFamily': 'Segoe UI, sans-serif'},
+                        {'if':{'column_id':'Concepto'},
+                         'textAlign':'left', 'fontWeight':'800',
+                         'color': '#0B2D5B', 'backgroundColor': '#F8FAFC',
+                         'minWidth':'230px', 'width':'230px', 'maxWidth':'230px'},
                     ],
-                    style_header={'backgroundColor':'#0B2D5B', 'color':'white', 'fontWeight':'700', 'textAlign':'center', 'border': '1px solid #0B2D5B'},
+                    style_header={
+                        'backgroundColor':'#0B2D5B', 'color':'white',
+                        'fontWeight':'700', 'textAlign':'center',
+                        'border': '1px solid #0B2D5B', 'fontSize': '13px'
+                    },
                     style_data_conditional=[{'if': {'row_index': 'odd'}, 'backgroundColor': '#F8FAFC'}],
                     sort_action='custom', sort_mode='single', sort_by=[], page_action='native'
                 )
@@ -637,26 +654,32 @@ def update_views(df_json, tab, balance_subtab, metric, chart_type, meses, cols_s
  
     # Formatear TODAS las celdas como strings con el signo correcto:
     #   - Filas de %: "45.23%" (multiplicar x100)
-    #   - Filas de dinero: "$  1,234,567.89" ($ fijo a la izquierda, separador de miles, 2 dec)
-    def fmt_peso(num):
+    #   - Filas de dinero: el $ va al extremo izquierdo y el número al extremo derecho,
+    #     igual que Excel. Se logra con HTML dentro de la celda usando dangerouslyAllowHTML.
+    #     Formato: <span style="float:left">$</span><span style="float:right">1,234.56</span>
+    def fmt_peso_html(num):
         if num < 0:
-            return f"$  ({abs(num):>14,.2f})"
-        return f"$   {num:>14,.2f}"
+            numero_str = f"-{abs(num):,.2f}"
+        else:
+            numero_str = f"{num:,.2f}"
+        return f'<span style="float:left;font-weight:700">$</span><span style="float:right;font-weight:700">{numero_str}</span>'
+ 
+    def fmt_pct_html(num):
+        return f'<span style="font-weight:700">{num * 100:,.2f}%</span>'
  
     for i, row_concepto in enumerate(display_df['Concepto'].tolist()):
         es_pct = '%' in str(row_concepto)
         for col in mes_cols:
             raw = display_df.at[i, col]
-            # Extraer el número flotante original (puede ser float, int, str o NaN)
             try:
                 if raw is None or (isinstance(raw, float) and pd.isna(raw)):
                     display_df.at[i, col] = '-'
                     continue
                 num = float(raw)
                 if es_pct:
-                    display_df.at[i, col] = f"{num * 100:,.2f}%"
+                    display_df.at[i, col] = fmt_pct_html(num)
                 else:
-                    display_df.at[i, col] = fmt_peso(num)
+                    display_df.at[i, col] = fmt_peso_html(num)
             except (ValueError, TypeError):
                 display_df.at[i, col] = str(raw) if raw is not None else '-'
  
