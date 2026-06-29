@@ -138,39 +138,38 @@ def calcular_otras_cuentas_cobrar(df, grupos):
                 total += (g_val - h_val)
     return total
 
-def obtener_resultados_acumulados(df):
-    
+def calcular_resultados_acumulados(df, grupos):
+    """
+    Para cuentas 304.01 y 304.02: Suma columna H (Crédito) y resta columna G (Débito).
+    Adicionalmente, resta la columna H donde el nombre diga 'GANACIAS/PERDIDAS NO DISTRIBUIDAS'.
+    """
     total = 0.0
-
+    
+    # 1. Suma H y resta G para las cuentas 304.xx
     for i in range(len(df)):
-
         codigo = str(df.iat[i, 0]).strip()
-        cuenta = str(df.iat[i, 1]).strip().upper()
-
-        # Columna G (Débito) y Columna H (Crédito)
-        debe = pd.to_numeric(df.iat[i, 6], errors="coerce")
-        haber = pd.to_numeric(df.iat[i, 7], errors="coerce")
-
-        debe = 0.0 if pd.isna(debe) else float(debe)
-        haber = 0.0 if pd.isna(haber) else float(haber)
-
-        # 1. Validación por CÓDIGO (Columna 0) para evitar problemas de texto
-        if codigo != 'nan' and codigo != '':
+        if pd.notna(df.iat[i, 0]) and codigo != 'nan' and codigo != '':
+            if any(codigo.startswith(grupo) for grupo in grupos):
+                g_debito = df.iat[i, 6]
+                h_credito = df.iat[i, 7]
+                
+                g_val = float(g_debito) if pd.notna(g_debito) and isinstance(g_debito, (int, float)) else 0.0
+                h_val = float(h_credito) if pd.notna(h_credito) and isinstance(h_credito, (int, float)) else 0.0
+                
+                # Fórmula solicitada: Suma H, Resta G (+ H - G)
+                total += (h_val - g_val)
+                
+    # 2. Restar columna H para 'GANACIAS/PERDIDAS NO DISTRIBUIDAS'
+    for i in range(len(df)):
+        nombre_cuenta = str(df.iat[i, 1]).strip().upper()
+        # Buscamos variaciones del texto como "GANACIAS" o "GANANCIAS"
+        if "NO DISTRIBUIDAS" in nombre_cuenta and ("GANANCIA" in nombre_cuenta or "GANACIA" in nombre_cuenta or "PERDIDA" in nombre_cuenta):
+            h_credito = df.iat[i, 7]
+            h_val = float(h_credito) if pd.notna(h_credito) and isinstance(h_credito, (int, float)) else 0.0
             
-            # 304.01: Suma H y resta G
-            if codigo.startswith("304.01"):
-                total += (haber - debe)
-
-            # 304.02: Suma H y resta G
-            elif codigo.startswith("304.02"):
-                total += (haber - debe)
-
-        # 2. Validación por NOMBRE (Columna 1) para GANANCIAS/PÉRDIDAS
-        # Usamos 'in' para atrapar variaciones como "GANACIAS" sin 'N'
-        if "NO DISTRIBUIDAS" in cuenta and ("GANANCIA" in cuenta or "GANACIA" in cuenta or "PERDIDA" in cuenta):
-            # OJO: Cambiado a 'haber' (Columna H) cumpliendo tu instrucción
-            total -= debe
-
+            # Fórmula solicitada: Restar H
+            total -= h_val
+            
     return total
 
 
@@ -245,7 +244,7 @@ def procesar_archivo_bytes(content, filename):
     # LÓGICAS NUEVAS APLICADAS AQUÍ:
     # -----------------------------------------------------
     otras_cxc = calcular_otras_cuentas_cobrar(df, CATALOGO_BALANCE['Otras_CxC_Grupos'])
-    res_acumulados = obtener_resultados_acumulados(df)
+    res_acumulados = calcular_resultados_acumulados(df, CATALOGO_BALANCE['Resultados_Acumulados_Grupos'])
     
     activo_circulante = efectivo + cxc + inventarios + imp_recuperar + otras_cxc
     
@@ -359,8 +358,8 @@ app.layout = html.Div([
             dcc.Dropdown(id='mes-filter', multi=True, placeholder='Todos los meses')
         ], style={'width':'23%','display':'inline-block','marginRight':'2%'}),
         html.Div([
-            html.Label('Columnas Visibles', style={'fontWeight': '600', 'color': '#1E293B', 'marginBottom': '6px', 'display': 'block'}), 
-            dcc.Dropdown(id='columns-filter', multi=True, placeholder='Todas las columnas', value=[])
+            html.Label('Conceptos Visibles', style={'fontWeight': '600', 'color': '#1E293B', 'marginBottom': '6px', 'display': 'block'}), 
+            dcc.Dropdown(id='columns-filter', multi=True, placeholder='Todos los conceptos', value=[])
         ], style={'width':'23%','display':'inline-block','marginRight':'2%'}),
         html.Div([
             html.Label('Métrica del Gráfico', style={'fontWeight': '600', 'color': '#1E293B', 'marginBottom': '6px', 'display': 'block'}), 
@@ -388,7 +387,10 @@ app.layout = html.Div([
                     id='main-table', page_size=50, fixed_columns={'headers': True, 'data': 1},
                     style_table={'width':'100%', 'minWidth':'100%', 'overflowX':'auto'},
                     style_cell={'textAlign':'right', 'padding':'12px 15px', 'minWidth':'140px', 'width':'140px', 'maxWidth':'140px', 'fontFamily': 'Segoe UI, sans-serif', 'color': '#334155', 'border': '1px solid #E2E8F0'},
-                    style_cell_conditional=[{'if':{'column_id':'Mes'}, 'textAlign':'center', 'fontWeight':'bold', 'color': '#0B2D5B', 'backgroundColor': '#F8FAFC'}],
+                    style_cell_conditional=[
+                        {'if':{'column_id':'Concepto'}, 'textAlign':'left', 'fontWeight':'bold', 'color': '#0B2D5B', 'backgroundColor': '#F8FAFC', 'minWidth':'200px', 'width':'200px', 'maxWidth':'200px'},
+                        {'if':{'filter_query':'{Concepto} contains "%"'}, 'color': '#64748B', 'fontStyle': 'italic'}
+                    ],
                     style_header={'backgroundColor':'#0B2D5B', 'color':'white', 'fontWeight':'700', 'textAlign':'center', 'border': '1px solid #0B2D5B'},
                     style_data_conditional=[{'if': {'row_index': 'odd'}, 'backgroundColor': '#F8FAFC'}],
                     sort_action='custom', sort_mode='single', sort_by=[], page_action='native'
@@ -465,6 +467,7 @@ def update_controls(df_json, tab):
     columnas_disponibles = [c for c in df.columns if c not in ['Mes', 'Tipo_Reporte']]
     
     metric_options = [{'label': m, 'value': m} for m in columnas_disponibles]
+    # En la vista transpuesta, "columnas visibles" filtra por conceptos (filas)
     col_options = [{'label': c, 'value': c} for c in columnas_disponibles]
     
     default_metric = "Total Activo" if tab == "balance" else ("Utilidad Neta" if "Utilidad Neta" in columnas_disponibles else columnas_disponibles[0])
@@ -510,24 +513,53 @@ def update_views(df_json, tab, metric, chart_type, meses, cols_seleccionadas, so
         df = df.sort_values('_sort_key', ascending=True)
     df = df.drop('_sort_key', axis=1)
 
-    # AQUÍ ASEGURAMOS QUE MES SE MANTENGA A LA IZQUIERDA EN LA VISTA FINAL
+    # TRANSPONER: Meses como columnas (arriba), conceptos como filas (izquierda)
     display_df = df.copy()
     if cols_seleccionadas:
-        display_df = display_df[['Mes'] + cols_seleccionadas]
+        # Filtramos solo los conceptos seleccionados (antes de transponer son columnas)
+        display_df = display_df[['Mes'] + [c for c in cols_seleccionadas if c in display_df.columns]]
     else:
         cols_finales = display_df.columns.tolist()
         if 'Mes' in cols_finales:
             cols_finales.insert(0, cols_finales.pop(cols_finales.index('Mes')))
         display_df = display_df[cols_finales]
 
+    # Guardamos los tipos de cada columna antes de transponer
+    col_types = {}
+    for c in display_df.columns:
+        if c == 'Mes':
+            col_types[c] = 'text'
+        elif '%' in c:
+            col_types[c] = 'pct'
+        else:
+            col_types[c] = 'num'
+
+    # Transponemos: conceptos pasan a ser filas, meses pasan a ser columnas
+    display_df = display_df.set_index('Mes').T.reset_index()
+    display_df = display_df.rename(columns={'index': 'Concepto'})
+
+    # Columnas dinámicas: primera es "Concepto", el resto son los meses
     columns_table = []
     for c in display_df.columns:
-        if c == "Mes":
-            columns_table.append({"name": c, "id": c, "type": "text"})
-        elif "%" in c:
-            columns_table.append({"name": c, "id": c, "type": "numeric", "format": Format(precision=2, scheme=Scheme.percentage)})
+        if c == 'Concepto':
+            columns_table.append({"name": "Concepto", "id": "Concepto", "type": "text"})
         else:
-            columns_table.append({"name": c, "id": c, "type": "numeric", "format": Format(precision=2, scheme=Scheme.fixed, group=Group.yes, symbol=Symbol.yes)})
+            columns_table.append({"name": c, "id": c, "type": "numeric",
+                                   "format": Format(precision=2, scheme=Scheme.fixed, group=Group.yes, symbol=Symbol.yes)})
+
+    # Formatear porcentajes: multiplicar x100 las filas que tengan "%" en el nombre del concepto
+    pct_rows = [r for r in display_df['Concepto'].tolist() if '%' in str(r)]
+    for col in display_df.columns:
+        if col == 'Concepto':
+            continue
+        for idx, row_val in enumerate(display_df['Concepto']):
+            if '%' in str(row_val):
+                v = display_df.at[idx, col]
+                if pd.notna(v):
+                    try:
+                        display_df.at[idx, col] = round(float(v) * 100, 2)
+                    except:
+                        pass
 
     fig = None
     if metric and metric in df.columns and not df.empty:
