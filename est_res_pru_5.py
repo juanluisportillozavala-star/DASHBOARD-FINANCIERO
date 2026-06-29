@@ -378,22 +378,35 @@ app.layout = html.Div([
         dcc.Tab(label='Balance General', value='balance', style=estilo_tab, selected_style=estilo_tab_seleccionada)
     ], style={'margin': '0 15px'}),
  
-    # SUB-PESTAÑAS DEL BALANCE (solo visibles cuando la pestaña activa es 'balance')
+    # SUB-SECCIONES DEL BALANCE — selección múltiple con botones toggle
     html.Div(id='balance-subtabs-container', children=[
-        dcc.Tabs(id='balance-subtab', value='activo_circulante', children=[
-            dcc.Tab(label='Activo Circulante', value='activo_circulante',
-                    style={**estilo_tab, 'fontSize':'13px', 'padding':'9px 16px'},
-                    selected_style={**estilo_tab_seleccionada, 'fontSize':'13px', 'padding':'8px 16px'}),
-            dcc.Tab(label='Activo Fijo', value='activo_fijo',
-                    style={**estilo_tab, 'fontSize':'13px', 'padding':'9px 16px'},
-                    selected_style={**estilo_tab_seleccionada, 'fontSize':'13px', 'padding':'8px 16px'}),
-            dcc.Tab(label='Pasivo Circulante', value='pasivo_circulante',
-                    style={**estilo_tab, 'fontSize':'13px', 'padding':'9px 16px'},
-                    selected_style={**estilo_tab_seleccionada, 'fontSize':'13px', 'padding':'8px 16px'}),
-            dcc.Tab(label='Capital Contable', value='capital_contable',
-                    style={**estilo_tab, 'fontSize':'13px', 'padding':'9px 16px'},
-                    selected_style={**estilo_tab_seleccionada, 'fontSize':'13px', 'padding':'8px 16px'}),
-        ], style={'margin': '0 15px', 'marginTop': '8px'})
+        html.Div([
+            html.Label('Secciones del Balance:', style={'fontWeight': '700', 'color': '#0B2D5B', 'marginRight': '12px', 'fontSize': '13px'}),
+            dcc.Checklist(
+                id='balance-subtab',
+                options=[
+                    {'label': '  Activo Circulante',  'value': 'activo_circulante'},
+                    {'label': '  Activo Fijo',         'value': 'activo_fijo'},
+                    {'label': '  Pasivo Circulante',   'value': 'pasivo_circulante'},
+                    {'label': '  Capital Contable',    'value': 'capital_contable'},
+                ],
+                value=['activo_circulante'],
+                inline=True,
+                inputStyle={'marginRight': '5px', 'accentColor': '#0B2D5B'},
+                labelStyle={
+                    'marginRight': '16px', 'padding': '8px 16px',
+                    'backgroundColor': '#F1F5F9', 'borderRadius': '20px',
+                    'border': '1.5px solid #CBD5E1', 'cursor': 'pointer',
+                    'fontWeight': '600', 'fontSize': '13px', 'color': '#334155',
+                    'display': 'inline-flex', 'alignItems': 'center'
+                },
+            )
+        ], style={
+            'margin': '8px 15px 0 15px', 'padding': '14px 20px',
+            'background': '#FFFFFF', 'borderRadius': '10px',
+            'boxShadow': '0 1px 3px rgba(0,0,0,0.05)',
+            'display': 'flex', 'alignItems': 'center', 'flexWrap': 'wrap', 'gap': '6px'
+        })
     ], style={'display': 'none'}),
  
     # CONTENEDOR TABLA Y GRÁFICO
@@ -540,6 +553,7 @@ def update_controls(df_json, tab):
     Output('main-table', 'columns'),
     Output('main-table', 'data'),
     Output('graph-container', 'children'),
+    Output('main-table', 'style_data_conditional'),
     Input('df-store', 'data'),
     Input('report-tab', 'value'),
     Input('balance-subtab', 'value'),
@@ -550,7 +564,7 @@ def update_controls(df_json, tab):
     Input('main-table', 'sort_by')
 )
 def update_views(df_json, tab, balance_subtab, metric, chart_type, meses, cols_seleccionadas, sort_by):
-    if not df_json: return [], [], html.Div('Esperando carga...', style={'textAlign': 'center', 'color': '#64748B', 'padding': '20px'})
+    if not df_json: return [], [], html.Div('Esperando carga...', style={'textAlign': 'center', 'color': '#64748B', 'padding': '20px'}), []
     
     try:
         df = pd.read_json(io.StringIO(df_json), orient='split')
@@ -564,7 +578,7 @@ def update_views(df_json, tab, balance_subtab, metric, chart_type, meses, cols_s
     if meses and len(meses) > 0:
         df = df[df['Mes'].isin(meses)]
         
-    if df.empty: return [], [], html.Div('Sin datos con los filtros actuales.', style={'color': '#EF4444', 'textAlign': 'center'})
+    if df.empty: return [], [], html.Div('Sin datos con los filtros actuales.', style={'color': '#EF4444', 'textAlign': 'center'}), []
     
     df['_sort_key'] = df['Mes'].apply(obtener_clave_orden)
     if sort_by and len(sort_by) > 0:
@@ -575,12 +589,17 @@ def update_views(df_json, tab, balance_subtab, metric, chart_type, meses, cols_s
         df = df.sort_values('_sort_key', ascending=True)
     df = df.drop('_sort_key', axis=1)
  
-    # FILTRAR CONCEPTOS POR SECCIÓN DEL BALANCE
-    if tab == 'balance' and balance_subtab and balance_subtab in BALANCE_SECCIONES:
-        conceptos_seccion = BALANCE_SECCIONES[balance_subtab]
-        # Quedamos solo con las columnas que existen en el df Y están en la sección
+    # FILTRAR CONCEPTOS POR SECCIÓN(ES) DEL BALANCE (soporte multi-selección)
+    if tab == 'balance' and balance_subtab and len(balance_subtab) > 0:
+        # Unimos los conceptos de todas las secciones seleccionadas en orden
+        conceptos_union = []
+        for sec in ['activo_circulante', 'activo_fijo', 'pasivo_circulante', 'capital_contable']:
+            if sec in balance_subtab:
+                for c in BALANCE_SECCIONES[sec]:
+                    if c not in conceptos_union:
+                        conceptos_union.append(c)
         cols_disponibles = df.columns.tolist()
-        cols_seccion = ['Mes'] + [c for c in conceptos_seccion if c in cols_disponibles]
+        cols_seccion = ['Mes'] + [c for c in conceptos_union if c in cols_disponibles]
         df = df[cols_seccion]
  
     # TRANSPONER: Meses como columnas (arriba), conceptos como filas (izquierda)
@@ -608,42 +627,38 @@ def update_views(df_json, tab, balance_subtab, metric, chart_type, meses, cols_s
     display_df = display_df.set_index('Mes').T.reset_index()
     display_df = display_df.rename(columns={'index': 'Concepto'})
  
-    # Identificar índices de filas de porcentaje ANTES de construir columns_table
+    # Identificar filas de porcentaje por nombre del concepto
     pct_concepto_indices = [i for i, r in enumerate(display_df['Concepto'].tolist()) if '%' in str(r)]
- 
-    # Convertir valores de filas % de decimal a número (ej: 0.45 -> 45.00 para mostrar con signo %)
-    for col in display_df.columns:
-        if col == 'Concepto':
-            continue
-        for idx in pct_concepto_indices:
-            v = display_df.at[idx, col]
-            if pd.notna(v):
-                try:
-                    display_df.at[idx, col] = round(float(v) * 100, 2)
-                except:
-                    pass
- 
-    # Convertir filas de porcentaje a texto con signo % para que se vean correctamente
-    # (Dash DataTable no permite formato mixto por fila, así que usamos strings)
     mes_cols = [c for c in display_df.columns if c != 'Concepto']
-    for idx in pct_concepto_indices:
-        for col in mes_cols:
-            v = display_df.at[idx, col]
-            if pd.notna(v):
-                try:
-                    display_df.at[idx, col] = f"{float(v):.2f}%"
-                except:
-                    pass
  
-    # Columnas dinámicas: Concepto fijo a la izquierda, meses como columnas
-    # Filas de monto: tipo numeric con formato $. Filas %: tipo text (ya convertido a string con %)
+    # Formatear TODAS las celdas como texto con el signo correcto:
+    #   - Filas de porcentaje: "45.23 %" (multiplicar x100 y agregar signo %)
+    #   - Filas de dinero: "$ 1,234,567.89" (con $ a la izquierda, separadores de miles, 2 decimales)
+    for i, row_concepto in enumerate(display_df['Concepto'].tolist()):
+        es_pct = '%' in str(row_concepto)
+        for col in mes_cols:
+            v = display_df.at[i, col]
+            if pd.isna(v) or v == '' or v is None:
+                display_df.at[i, col] = '-'
+                continue
+            try:
+                num = float(v)
+                if es_pct:
+                    display_df.at[i, col] = f"{num * 100:,.2f} %"
+                else:
+                    # Formato tipo Excel con $ fijo a la izquierda y separador de miles
+                    if num < 0:
+                        display_df.at[i, col] = f"$ ({abs(num):,.2f})"
+                    else:
+                        display_df.at[i, col] = f"$ {num:,.2f}"
+            except (ValueError, TypeError):
+                pass
+ 
+    # Todas las columnas son tipo text porque ya formateamos los valores como strings
     columns_table = []
     for c in display_df.columns:
-        if c == 'Concepto':
-            columns_table.append({"name": "Concepto", "id": "Concepto", "type": "text"})
-        else:
-            columns_table.append({"name": c, "id": c, "type": "any",
-                                   "format": Format(precision=2, scheme=Scheme.fixed, group=Group.yes, symbol=Symbol.yes)})
+        columns_table.append({"name": "Concepto" if c == "Concepto" else c,
+                               "id": c, "type": "text"})
  
     fig = None
     if metric and metric in df.columns and not df.empty:
@@ -660,19 +675,15 @@ def update_views(df_json, tab, balance_subtab, metric, chart_type, meses, cols_s
  
     graph = dcc.Graph(figure=fig, config={'displayModeBar': False}) if fig else html.Div()
  
-    # Agregar signo % como sufijo en las celdas de filas de porcentaje via style_data_conditional
-    pct_style = []
+    # Estilos dinámicos por fila: filas % en gris/itálica, filas alternas en gris claro
+    style_data_cond = [{'if': {'row_index': 'odd'}, 'backgroundColor': '#F8FAFC'}]
     for idx in pct_concepto_indices:
-        concepto_val = display_df.at[idx, 'Concepto']
-        for col in display_df.columns:
-            if col == 'Concepto':
-                continue
-            pct_style.append({
-                'if': {'row_index': idx, 'column_id': col},
-                'color': '#64748B', 'fontStyle': 'italic'
-            })
+        style_data_cond.append({
+            'if': {'row_index': idx},
+            'color': '#64748B', 'fontStyle': 'italic', 'backgroundColor': '#F1F5F9'
+        })
  
-    return columns_table, display_df.to_dict('records'), graph
+    return columns_table, display_df.to_dict('records'), graph, style_data_cond
  
  
 if __name__ == '__main__':
