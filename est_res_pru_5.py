@@ -6,37 +6,37 @@ from flask import Flask
 from dash import Dash, dcc, html, Input, Output, State, dash_table
 from dash.dash_table.Format import Format, Scheme, Group, Symbol
 import plotly.graph_objs as go
- 
+
 print("Iniciando servidor Dash para el dashboard web")
- 
+
 # ==================== CONFIGURACIÓN DEL LOGO ====================
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 PATH_DEL_LOGO = os.path.join(BASE_DIR, "logo.png")
- 
+
 def encode_image(path):
     try:
         with open(path, "rb") as f:
             return base64.b64encode(f.read()).decode()
     except FileNotFoundError:
         return ""
- 
+
 logo_base64 = encode_image(PATH_DEL_LOGO)
- 
+
 # ==================== DICCIONARIO DE MESES ====================
 MESES_ORDEN = {
     'ENERO': 1, 'FEBRERO': 2, 'MARZO': 3, 'ABRIL': 4, 
     'MAYO': 5, 'JUNIO': 6, 'JULIO': 7, 'AGOSTO': 8, 
     'SEPTIEMBRE': 9, 'OCTUBRE': 10, 'NOVIEMBRE': 11, 'DICIEMBRE': 12
 }
- 
+
 def obtener_clave_orden(mes_str):
     partes = str(mes_str).split()
     if len(partes) == 2:
         mes, año = partes
         return (int(año), MESES_ORDEN.get(mes.upper(), 0))
     return (0, 0)
- 
- 
+
+
 # ==================== CATÁLOGO EXACTO PARA BALANCE ====================
 CATALOGO_BALANCE = {
     'Efectivo': ['101.01.002', '102.01.001', '102.01.002'], 
@@ -50,21 +50,20 @@ CATALOGO_BALANCE = {
     'Equipo_de_Computo': ['154.01.001', '154.01.002', '156.01.001'],
     'Depreciacion_Acumulada': ['171.03.001', '171.03.002', '171.05.001'],
     
-    'Proveedores': ['201.01.001'],
-    'Acreedores_Diversos': ['201.03.001', '205.02.001', '205.06.002'],
+    'Proveedores': ['201.01.001', '201.03.001'],
     'Impuestos_por_Pagar': [
         '208.01.001', '209.01.001', '209.01.002', '213.01.001', 
         '213.03.001', '216.01.001', '216.04.001', '216.05.001', 
         '216.10.001', '216.10.002', '216.11.001', '216.12.001', '216.12.002'
     ],
-    'Otros_Pasivos': ['206.01.001', '210.01.001'],
+    'Otros_Pasivos': ['205.02.001', '205.06.002', '206.01.001', '210.01.001'],
     
     'Capital_Social': ['301.01.001'],
     'Resultados_Acumulados_Grupos': ['304.01', '304.02'] 
 }
- 
+
 # ---------------------- LÓGICA DE PROCESAMIENTO CONTABLE ----------------------
- 
+
 def obtener_valor(df, cuenta, columna):
     for i in range(len(df)):
         valor_cuenta = str(df.iat[i, 1]).strip()
@@ -73,7 +72,7 @@ def obtener_valor(df, cuenta, columna):
             if pd.isna(valor): return 0.0
             return float(valor)
     return 0.0
- 
+
 def obtener_704_04(df, columna):
     texto_busqueda = "704.04"
     for i in range(len(df)):
@@ -83,7 +82,7 @@ def obtener_704_04(df, columna):
             if pd.isna(valor): return 0.0
             return float(valor)
     return 0.0
- 
+
 def obtener_movimiento_neto(df, cuenta, es_acreedora=False):
     for i in range(len(df)):
         valor_cuenta = str(df.iat[i, 1]).strip()
@@ -92,7 +91,7 @@ def obtener_movimiento_neto(df, cuenta, es_acreedora=False):
             abono = float(df.iat[i, 5]) if not pd.isna(df.iat[i, 5]) else 0.0
             return (abono - cargo) if es_acreedora else (cargo - abono)
     return 0.0
- 
+
 def obtener_704_04_neto(df, es_acreedora=False):
     texto_busqueda = "704.04"
     for i in range(len(df)):
@@ -102,7 +101,7 @@ def obtener_704_04_neto(df, es_acreedora=False):
             abono = float(df.iat[i, 5]) if not pd.isna(df.iat[i, 5]) else 0.0
             return (abono - cargo) if es_acreedora else (cargo - abono)
     return 0.0
- 
+
 def obtener_saldo_exacto(df, lista_codigos_exactos, es_acreedora=False):
     total_debe = 0.0
     total_haber = 0.0
@@ -115,9 +114,9 @@ def obtener_saldo_exacto(df, lista_codigos_exactos, es_acreedora=False):
             if pd.notna(haber) and isinstance(haber, (int, float)): total_haber += float(haber)
                 
     return (total_haber - total_debe) if es_acreedora else (total_debe - total_haber)
- 
+
 # --- NUEVAS FUNCIONES ESPECÍFICAS SOLICITADAS POR EL USUARIO ---
- 
+
 def calcular_otras_cuentas_cobrar(df, grupos):
     """
     Suma columna G (Débito Final) y resta columna H (Crédito Final)
@@ -138,7 +137,7 @@ def calcular_otras_cuentas_cobrar(df, grupos):
                 # Fórmula exacta solicitada: Suma G, Resta H (+ G - H)
                 total += (g_val - h_val)
     return total
- 
+
 def calcular_resultados_acumulados(df, grupos):
     """
     Para cuentas 304.01 y 304.02: Suma columna H (Crédito) y resta columna G (Débito).
@@ -172,15 +171,15 @@ def calcular_resultados_acumulados(df, grupos):
             total -= h_val
             
     return total
- 
- 
+
+
 # --- Procesador Principal del Excel ---
 def procesar_archivo_bytes(content, filename):
     header, encoded = content.split(",", 1)
     data = base64.b64decode(encoded)
     df = pd.read_excel(io.BytesIO(data), header=None)
     mes_nombre = os.path.splitext(os.path.basename(filename))[0]
- 
+
     # ==========================================
     # 1. ESTADO DE RESULTADOS (ACUMULADO)
     # ==========================================
@@ -195,7 +194,7 @@ def procesar_archivo_bytes(content, filename):
     prod_fin_acum = obtener_valor(df, "702.01 Utilidad cambiaria", 7)
     
     utilidad_neta_acum = utilidad_operacion_acum - gastos_fin_acum + prod_fin_acum
- 
+
     data_acumulada = {
         "Mes": mes_nombre, "Tipo_Reporte": "Acumulado",
         "Ingresos": ingresos_acum, "Costos": costos_acum, "% Costos": costos_acum/ingresos_acum if ingresos_acum else 0,
@@ -206,7 +205,7 @@ def procesar_archivo_bytes(content, filename):
         "Productos Financieros": prod_fin_acum, "% Prod. Fin.": prod_fin_acum/ingresos_acum if ingresos_acum else 0,
         "Utilidad Neta": utilidad_neta_acum, "% Utilidad Neta": utilidad_neta_acum/ingresos_acum if ingresos_acum else 0
     }
- 
+
     # ==========================================
     # 2. ESTADO DE RESULTADOS (MENSUAL)
     # ==========================================
@@ -221,7 +220,7 @@ def procesar_archivo_bytes(content, filename):
     prod_fin_mes = obtener_movimiento_neto(df, "702.01 Utilidad cambiaria", es_acreedora=True)
     
     utilidad_neta_mes = utilidad_operacion_mes - gastos_fin_mes + prod_fin_mes
- 
+
     data_mensual = {
         "Mes": mes_nombre, "Tipo_Reporte": "Mensual",
         "Ingresos": ingresos_mes, "Costos": costos_mes, "% Costos": costos_mes/ingresos_mes if ingresos_mes else 0,
@@ -232,7 +231,7 @@ def procesar_archivo_bytes(content, filename):
         "Productos Financieros": prod_fin_mes, "% Prod. Fin.": prod_fin_mes/ingresos_mes if ingresos_mes else 0,
         "Utilidad Neta": utilidad_neta_mes, "% Utilidad Neta": utilidad_neta_mes/ingresos_mes if ingresos_mes else 0
     }
- 
+
     # ==========================================
     # 3. BALANCE GENERAL (POSICIÓN FINANCIERA)
     # ==========================================
@@ -253,19 +252,18 @@ def procesar_archivo_bytes(content, filename):
     depreciacion = obtener_saldo_exacto(df, CATALOGO_BALANCE['Depreciacion_Acumulada']) 
     activo_fijo = eq_computo + depreciacion
     total_activo = activo_circulante + activo_fijo
- 
+
     proveedores = obtener_saldo_exacto(df, CATALOGO_BALANCE['Proveedores'], es_acreedora=True)
-    acreedores_diversos = obtener_saldo_exacto(df, CATALOGO_BALANCE['Acreedores_Diversos'], es_acreedora=True)
     imp_pagar = obtener_saldo_exacto(df, CATALOGO_BALANCE['Impuestos_por_Pagar'], es_acreedora=True)
     otros_pasivos = obtener_saldo_exacto(df, CATALOGO_BALANCE['Otros_Pasivos'], es_acreedora=True)
-    pasivo_circulante = proveedores + acreedores_diversos + imp_pagar + otros_pasivos
+    pasivo_circulante = proveedores + imp_pagar + otros_pasivos
     
     capital_social = obtener_saldo_exacto(df, CATALOGO_BALANCE['Capital_Social'], es_acreedora=True)
     utilidad_ejercicio = utilidad_neta_acum 
     
     capital_contable = capital_social + res_acumulados + utilidad_ejercicio
     total_pasivo_capital = pasivo_circulante + capital_contable
- 
+
     data_balance = {
         "Mes": mes_nombre, "Tipo_Reporte": "Balance",
         "Efectivo": efectivo, "% Efectivo": efectivo/total_activo if total_activo else 0,
@@ -279,7 +277,6 @@ def procesar_archivo_bytes(content, filename):
         "Total Activo Fijo": activo_fijo, "% Act. Fijo": activo_fijo/total_activo if total_activo else 0,
         "Total Activo": total_activo,
         "Proveedores": proveedores, "% Proveedores": proveedores/total_pasivo_capital if total_pasivo_capital else 0,
-        "Acreedores Diversos": acreedores_diversos, "% Acreedores Div.": acreedores_diversos/total_pasivo_capital if total_pasivo_capital else 0,
         "Impuestos por Pagar": imp_pagar, "% Imp. Pagar": imp_pagar/total_pasivo_capital if total_pasivo_capital else 0,
         "Otros Pasivos": otros_pasivos, "% Otros Pasivos": otros_pasivos/total_pasivo_capital if total_pasivo_capital else 0,
         "Total Pasivo": pasivo_circulante, "% Total Pasivo": pasivo_circulante/total_pasivo_capital if total_pasivo_capital else 0,
@@ -289,14 +286,14 @@ def procesar_archivo_bytes(content, filename):
         "Total Capital": capital_contable, "% Total Capital": capital_contable/total_pasivo_capital if total_pasivo_capital else 0,
         "Total Pasivo y Capital": total_pasivo_capital
     }
- 
+
     return data_acumulada, data_mensual, data_balance
- 
- 
+
+
 # ---------------------- APP Dash ----------------------
 server = Flask(__name__)
 app = Dash(__name__, server=server)
- 
+
 app.index_string = """
 <!DOCTYPE html>
 <html>
@@ -309,9 +306,6 @@ app.index_string = """
         html, body, #react-entry-point { width: 100%; height: 100%; margin: 0; padding: 0; background-color: #F8FAFC; font-family: 'Segoe UI', system-ui, -apple-system, sans-serif; }
         .dash-table-container { width: 100% !important; }
         .Select-control { border: 1px solid #E2E8F0 !important; border-radius: 8px !important; }
-        /* Celda de dinero: $ a la izquierda, número a la derecha, igual que Excel */
-        .dash-cell div { overflow: hidden; }
-        .dash-cell div span { display: inline; }
     </style>
 </head>
 <body>
@@ -320,7 +314,7 @@ app.index_string = """
 </body>
 </html>
 """
- 
+
 estilo_tab = {
     'borderBottom': '1px solid #E2E8F0', 'padding': '12px 24px', 'fontWeight': '600',
     'color': '#64748B', 'backgroundColor': '#F8FAFC', 'borderRadius': '8px 8px 0px 0px', 'marginRight': '4px'
@@ -330,7 +324,7 @@ estilo_tab_seleccionada = {
     'padding': '11px 24px', 'color': '#0B2D5B', 'fontWeight': '700', 'borderRadius': '8px 8px 0px 0px',
     'marginRight': '4px', 'boxShadow': '0px -2px 5px rgba(0,0,0,0.02)'
 }
- 
+
 app.layout = html.Div([
     
     # HEADER
@@ -343,7 +337,7 @@ app.layout = html.Div([
             ], style={'display': 'inline-block', 'verticalAlign': 'middle'})
         ], style={'display': 'flex', 'alignItems': 'center'})
     ], style={'background': 'linear-gradient(135deg, #0B2D5B 0%, #1E3A61 100%)', 'padding': '20px 30px', 'borderRadius': '0px 0px 15px 15px', 'boxShadow': '0 4px 6px -1px rgba(0,0,0,0.1)', 'marginBottom': '25px', 'borderBottom': '4px solid #C9A227'}),
- 
+
     # ZONA DE CARGA
     html.Div([
         html.Label('Carga de Datos Operativos', style={'fontWeight': '700', 'color': '#0B2D5B', 'fontSize': '15px', 'display': 'block', 'marginBottom': '8px'}),
@@ -354,9 +348,9 @@ app.layout = html.Div([
             multiple=True, enable_folder_selection=True, accept='.xlsx'
         )
     ], style={'padding': '0 15px', 'marginBottom': '20px'}),
- 
+
     html.Div(id='upload-status', style={'padding': '0 15px', 'fontWeight': '600', 'color': '#1E293B'}),
- 
+
     # FILTROS Y CONTROLES
     html.Div([
         html.Div([
@@ -376,75 +370,28 @@ app.layout = html.Div([
             dcc.Dropdown(id='chart-type', options=[{'label':'Líneas de Tendencia','value':'lines'},{'label':'Barras Comparativas','value':'bars'}], value='lines', clearable=False)
         ], style={'width':'23%','display':'inline-block'})
     ], style={'margin': '15px', 'padding': '20px', 'background': '#FFFFFF', 'borderRadius': '12px', 'boxShadow': '0 1px 3px rgba(0,0,0,0.05)'}),
- 
-    # PESTAÑAS PRINCIPALES
+
+    # PESTAÑAS 
     dcc.Tabs(id='report-tab', value='acumulado', children=[
         dcc.Tab(label='Estado de Resultados Acumulado', value='acumulado', style=estilo_tab, selected_style=estilo_tab_seleccionada),
         dcc.Tab(label='Estado de Resultados Mensual', value='mensual', style=estilo_tab, selected_style=estilo_tab_seleccionada),
         dcc.Tab(label='Balance General', value='balance', style=estilo_tab, selected_style=estilo_tab_seleccionada)
     ], style={'margin': '0 15px'}),
- 
-    # SUB-SECCIONES DEL BALANCE — selección múltiple con botones toggle
-    html.Div(id='balance-subtabs-container', children=[
-        html.Div([
-            html.Label('Secciones del Balance:', style={'fontWeight': '700', 'color': '#0B2D5B', 'marginRight': '12px', 'fontSize': '13px'}),
-            dcc.Checklist(
-                id='balance-subtab',
-                options=[
-                    {'label': '  Activo Circulante',  'value': 'activo_circulante'},
-                    {'label': '  Activo Fijo',         'value': 'activo_fijo'},
-                    {'label': '  Pasivo Circulante',   'value': 'pasivo_circulante'},
-                    {'label': '  Capital Contable',    'value': 'capital_contable'},
-                ],
-                value=['activo_circulante'],
-                inline=True,
-                inputStyle={'marginRight': '5px', 'accentColor': '#0B2D5B'},
-                labelStyle={
-                    'marginRight': '16px', 'padding': '8px 16px',
-                    'backgroundColor': '#F1F5F9', 'borderRadius': '20px',
-                    'border': '1.5px solid #CBD5E1', 'cursor': 'pointer',
-                    'fontWeight': '600', 'fontSize': '13px', 'color': '#334155',
-                    'display': 'inline-flex', 'alignItems': 'center'
-                },
-            )
-        ], style={
-            'margin': '8px 15px 0 15px', 'padding': '14px 20px',
-            'background': '#FFFFFF', 'borderRadius': '10px',
-            'boxShadow': '0 1px 3px rgba(0,0,0,0.05)',
-            'display': 'flex', 'alignItems': 'center', 'flexWrap': 'wrap', 'gap': '6px'
-        })
-    ], style={'display': 'none'}),
- 
+
     # CONTENEDOR TABLA Y GRÁFICO
     html.Div([
         html.Div(
             style={'width': '100%', 'marginBottom': '25px', 'background': '#FFFFFF', 'borderRadius': '0px 0px 12px 12px', 'padding': '20px', 'boxShadow': '0 1px 3px rgba(0,0,0,0.05)', 'borderTop': '1px solid #E2E8F0'},
             children=[
                 dash_table.DataTable(
-                    id='main-table', page_size=50,
-                    fixed_columns={'headers': True, 'data': 1},
-                    fixed_rows={'headers': True},
-                    markdown_options={"html": True},
-                    style_table={'width':'100%', 'minWidth':'100%', 'overflowX':'auto', 'maxHeight':'600px', 'overflowY':'auto'},
-                    style_cell={
-                        'textAlign':'left', 'padding':'10px 14px',
-                        'minWidth':'165px', 'width':'165px', 'maxWidth':'165px',
-                        'fontFamily': 'Segoe UI, sans-serif', 'fontSize': '13px',
-                        'fontWeight': '700', 'color': '#1E293B',
-                        'border': '1px solid #E2E8F0', 'whiteSpace': 'nowrap',
-                        'overflow': 'hidden'
-                    },
+                    id='main-table', page_size=50, fixed_columns={'headers': True, 'data': 1},
+                    style_table={'width':'100%', 'minWidth':'100%', 'overflowX':'auto'},
+                    style_cell={'textAlign':'right', 'padding':'12px 15px', 'minWidth':'140px', 'width':'140px', 'maxWidth':'140px', 'fontFamily': 'Segoe UI, sans-serif', 'color': '#334155', 'border': '1px solid #E2E8F0'},
                     style_cell_conditional=[
-                        {'if':{'column_id':'Concepto'},
-                         'textAlign':'left', 'fontWeight':'800',
-                         'color': '#0B2D5B', 'backgroundColor': '#F8FAFC',
-                         'minWidth':'230px', 'width':'230px', 'maxWidth':'230px'},
+                        {'if':{'column_id':'Concepto'}, 'textAlign':'left', 'fontWeight':'bold', 'color': '#0B2D5B', 'backgroundColor': '#F8FAFC', 'minWidth':'200px', 'width':'200px', 'maxWidth':'200px'},
+                        {'if':{'filter_query':'{Concepto} contains "%"'}, 'color': '#64748B', 'fontStyle': 'italic'}
                     ],
-                    style_header={
-                        'backgroundColor':'#0B2D5B', 'color':'white',
-                        'fontWeight':'700', 'textAlign':'center',
-                        'border': '1px solid #0B2D5B', 'fontSize': '13px'
-                    },
+                    style_header={'backgroundColor':'#0B2D5B', 'color':'white', 'fontWeight':'700', 'textAlign':'center', 'border': '1px solid #0B2D5B'},
                     style_data_conditional=[{'if': {'row_index': 'odd'}, 'backgroundColor': '#F8FAFC'}],
                     sort_action='custom', sort_mode='single', sort_by=[], page_action='native'
                 )
@@ -452,111 +399,13 @@ app.layout = html.Div([
         ),
         html.Div(id='graph-container', style={'width': '100%', 'background': '#FFFFFF', 'borderRadius': '12px', 'padding': '15px', 'boxShadow': '0 1px 3px rgba(0,0,0,0.05)'})
     ], style={'padding': '0 15px'}),
- 
-    # PANEL DE COMPARACIÓN MENSUAL (solo visible en pestaña Mensual)
-    html.Div(id='comparacion-container', children=[
-        html.Div([
-            # Título del panel
-            html.Div([
-                html.Span('⚖️', style={'fontSize': '20px', 'marginRight': '10px'}),
-                html.Span('Comparación entre Meses', style={
-                    'fontWeight': '700', 'fontSize': '16px', 'color': '#0B2D5B'
-                })
-            ], style={'marginBottom': '16px', 'display': 'flex', 'alignItems': 'center'}),
- 
-            # Selectores de mes A y mes B
-            html.Div([
-                html.Div([
-                    html.Label('Mes Base', style={
-                        'fontWeight': '600', 'color': '#1E293B', 'marginBottom': '6px',
-                        'display': 'block', 'fontSize': '13px'
-                    }),
-                    dcc.Dropdown(id='comp-mes-a', placeholder='Selecciona mes base...',
-                                 clearable=False,
-                                 style={'fontWeight': '600'})
-                ], style={'width': '30%', 'display': 'inline-block', 'marginRight': '3%'}),
- 
-                html.Div([
-                    html.Label('Mes a Comparar', style={
-                        'fontWeight': '600', 'color': '#1E293B', 'marginBottom': '6px',
-                        'display': 'block', 'fontSize': '13px'
-                    }),
-                    dcc.Dropdown(id='comp-mes-b', placeholder='Selecciona mes a comparar...',
-                                 clearable=False,
-                                 style={'fontWeight': '600'})
-                ], style={'width': '30%', 'display': 'inline-block', 'marginRight': '3%'}),
- 
-                html.Div([
-                    html.Label(' ', style={'display': 'block', 'marginBottom': '6px'}),
-                    html.Button('Comparar', id='btn-comparar',
-                        style={
-                            'backgroundColor': '#0B2D5B', 'color': 'white',
-                            'border': 'none', 'borderRadius': '8px',
-                            'padding': '10px 28px', 'fontWeight': '700',
-                            'fontSize': '14px', 'cursor': 'pointer',
-                            'boxShadow': '0 2px 4px rgba(0,0,0,0.15)'
-                        })
-                ], style={'width': '15%', 'display': 'inline-block', 'verticalAlign': 'bottom'}),
-            ], style={'marginBottom': '20px'}),
- 
-            # Resultado de comparación
-            html.Div(id='comparacion-resultado')
- 
-        ], style={
-            'background': '#FFFFFF', 'borderRadius': '12px',
-            'padding': '24px', 'boxShadow': '0 1px 3px rgba(0,0,0,0.07)',
-            'border': '1.5px solid #E2E8F0'
-        })
-    ], style={'padding': '20px 15px 0 15px', 'display': 'none'}),
- 
+
     dcc.Store(id='df-store')
 ], style={'width':'100%', 'maxWidth':'100%', 'margin':'0', 'boxSizing': 'border-box'})
- 
- 
-# ==================== MAPEO DE SECCIONES DEL BALANCE ====================
-BALANCE_SECCIONES = {
-    'activo_circulante': [
-        'Efectivo', '% Efectivo',
-        'Cuentas por Cobrar', '% Cuentas x Cobrar',
-        'Inventarios', '% Inventarios',
-        'Impuestos por Recuperar', '% Imp. Recuperar',
-        'Otras Cuentas x Cobrar', '% Otras CxC',
-        'Total Activo Circulante', '% Act. Circulante',
-    ],
-    'activo_fijo': [
-        'Equipo de Cómputo',
-        'Depreciación Acumulada',
-        'Total Activo Fijo', '% Act. Fijo',
-        'Total Activo',
-    ],
-    'pasivo_circulante': [
-        'Proveedores', '% Proveedores',
-        'Acreedores Diversos', '% Acreedores Div.',
-        'Impuestos por Pagar', '% Imp. Pagar',
-        'Otros Pasivos', '% Otros Pasivos',
-        'Total Pasivo', '% Total Pasivo',
-    ],
-    'capital_contable': [
-        'Capital Social',
-        'Resultados Acumulados',
-        'Utilidad del Ejercicio',
-        'Total Capital', '% Total Capital',
-        'Total Pasivo y Capital',
-    ],
-}
- 
+
+
 # ---------------------- CALLBACKS ----------------------
- 
-@app.callback(
-    Output('balance-subtabs-container', 'style'),
-    Input('report-tab', 'value')
-)
-def toggle_balance_subtabs(tab):
-    if tab == 'balance':
-        return {'display': 'block'}
-    return {'display': 'none'}
- 
- 
+
 @app.callback(
     Output('df-store', 'data'),
     Output('upload-status', 'children'),
@@ -567,7 +416,7 @@ def toggle_balance_subtabs(tab):
 def handle_upload(upload_contents, upload_names):
     if not upload_contents or not upload_names:
         return None, '', []
- 
+
     resultados = []
     valid_files = [(c, n) for c, n in zip(upload_contents, upload_names) if n.lower().endswith('.xlsx')]
     
@@ -577,7 +426,7 @@ def handle_upload(upload_contents, upload_names):
             resultados.extend([acum, mens, bal])
         except Exception as e:
             return None, html.Div(f"Error procesando {name}: {e}", style={'color': '#EF4444'}), []
- 
+
     df = pd.DataFrame(resultados)
     
     # REORDENAMIENTO MAESTRO: Forzamos a que 'Mes' siempre quede al inicio de todo el DataFrame globalmente
@@ -593,8 +442,8 @@ def handle_upload(upload_contents, upload_names):
     
     status_msg = html.Div(f'✓ {len(valid_files)} archivos procesados con éxito. Balance calculado con reglas actualizadas.', style={'color': '#10B981', 'padding': '10px 0'})
     return df.to_json(date_format='iso', orient='split'), status_msg, mes_options
- 
- 
+
+
 @app.callback(
     Output('metric-dropdown', 'options'),
     Output('metric-dropdown', 'value'),
@@ -624,24 +473,22 @@ def update_controls(df_json, tab):
     default_metric = "Total Activo" if tab == "balance" else ("Utilidad Neta" if "Utilidad Neta" in columnas_disponibles else columnas_disponibles[0])
     
     return metric_options, default_metric, col_options, []
- 
- 
+
+
 @app.callback(
     Output('main-table', 'columns'),
     Output('main-table', 'data'),
     Output('graph-container', 'children'),
-    Output('main-table', 'style_data_conditional'),
     Input('df-store', 'data'),
     Input('report-tab', 'value'),
-    Input('balance-subtab', 'value'),
     Input('metric-dropdown', 'value'),
     Input('chart-type', 'value'),
     Input('mes-filter', 'value'),
     Input('columns-filter', 'value'),
     Input('main-table', 'sort_by')
 )
-def update_views(df_json, tab, balance_subtab, metric, chart_type, meses, cols_seleccionadas, sort_by):
-    if not df_json: return [], [], html.Div('Esperando carga...', style={'textAlign': 'center', 'color': '#64748B', 'padding': '20px'}), []
+def update_views(df_json, tab, metric, chart_type, meses, cols_seleccionadas, sort_by):
+    if not df_json: return [], [], html.Div('Esperando carga...', style={'textAlign': 'center', 'color': '#64748B', 'padding': '20px'})
     
     try:
         df = pd.read_json(io.StringIO(df_json), orient='split')
@@ -655,7 +502,7 @@ def update_views(df_json, tab, balance_subtab, metric, chart_type, meses, cols_s
     if meses and len(meses) > 0:
         df = df[df['Mes'].isin(meses)]
         
-    if df.empty: return [], [], html.Div('Sin datos con los filtros actuales.', style={'color': '#EF4444', 'textAlign': 'center'}), []
+    if df.empty: return [], [], html.Div('Sin datos con los filtros actuales.', style={'color': '#EF4444', 'textAlign': 'center'})
     
     df['_sort_key'] = df['Mes'].apply(obtener_clave_orden)
     if sort_by and len(sort_by) > 0:
@@ -665,23 +512,10 @@ def update_views(df_json, tab, balance_subtab, metric, chart_type, meses, cols_s
     else:
         df = df.sort_values('_sort_key', ascending=True)
     df = df.drop('_sort_key', axis=1)
- 
-    # FILTRAR CONCEPTOS POR SECCIÓN(ES) DEL BALANCE (soporte multi-selección)
-    if tab == 'balance' and balance_subtab and len(balance_subtab) > 0:
-        # Unimos los conceptos de todas las secciones seleccionadas en orden
-        conceptos_union = []
-        for sec in ['activo_circulante', 'activo_fijo', 'pasivo_circulante', 'capital_contable']:
-            if sec in balance_subtab:
-                for c in BALANCE_SECCIONES[sec]:
-                    if c not in conceptos_union:
-                        conceptos_union.append(c)
-        cols_disponibles = df.columns.tolist()
-        cols_seccion = ['Mes'] + [c for c in conceptos_union if c in cols_disponibles]
-        df = df[cols_seccion]
- 
+
     # TRANSPONER: Meses como columnas (arriba), conceptos como filas (izquierda)
     display_df = df.copy()
-    if cols_seleccionadas and tab != 'balance':
+    if cols_seleccionadas:
         # Filtramos solo los conceptos seleccionados (antes de transponer son columnas)
         display_df = display_df[['Mes'] + [c for c in cols_seleccionadas if c in display_df.columns]]
     else:
@@ -689,7 +523,7 @@ def update_views(df_json, tab, balance_subtab, metric, chart_type, meses, cols_s
         if 'Mes' in cols_finales:
             cols_finales.insert(0, cols_finales.pop(cols_finales.index('Mes')))
         display_df = display_df[cols_finales]
- 
+
     # Guardamos los tipos de cada columna antes de transponer
     col_types = {}
     for c in display_df.columns:
@@ -699,63 +533,34 @@ def update_views(df_json, tab, balance_subtab, metric, chart_type, meses, cols_s
             col_types[c] = 'pct'
         else:
             col_types[c] = 'num'
- 
+
     # Transponemos: conceptos pasan a ser filas, meses pasan a ser columnas
     display_df = display_df.set_index('Mes').T.reset_index()
     display_df = display_df.rename(columns={'index': 'Concepto'})
- 
-    # Identificar filas de porcentaje por nombre del concepto
-    pct_concepto_indices = [i for i, r in enumerate(display_df['Concepto'].tolist()) if '%' in str(r)]
-    mes_cols = [c for c in display_df.columns if c != 'Concepto']
- 
-    # CRÍTICO: convertir todas las columnas de mes a object ANTES de asignar strings
-    for col in mes_cols:
-        display_df[col] = display_df[col].astype(object)
- 
-    # Formatear celdas como HTML inline (permitido via markdown_options html:True):
-    #   - Dinero: <div style="display:flex;justify-content:space-between"><b>$</b><b>1,234.56</b></div>
-    #     → $ fijo a la izquierda, número a la derecha, igual que Excel
-    #   - Porcentaje: "45.23%" centrado en negrita
-    #   - Negativos: signo menos antes del número (no paréntesis)
-    def fmt_peso(num):
-        if num < 0:
-            numero_str = f"-{abs(num):,.2f}"
-        else:
-            numero_str = f"{num:,.2f}"
-        return (
-            '<div style="display:flex;justify-content:space-between;'
-            'font-weight:700;width:100%;">'
-            f'<span>$</span><span>{numero_str}</span></div>'
-        )
- 
-    def fmt_pct(num):
-        return f'<div style="text-align:right;font-weight:700">{num * 100:,.2f}%</div>'
- 
-    for i, row_concepto in enumerate(display_df['Concepto'].tolist()):
-        es_pct = '%' in str(row_concepto)
-        for col in mes_cols:
-            raw = display_df.at[i, col]
-            try:
-                if raw is None or (isinstance(raw, float) and pd.isna(raw)):
-                    display_df.at[i, col] = '-'
-                    continue
-                num = float(raw)
-                if es_pct:
-                    display_df.at[i, col] = fmt_pct(num)
-                else:
-                    display_df.at[i, col] = fmt_peso(num)
-            except (ValueError, TypeError):
-                display_df.at[i, col] = str(raw) if raw is not None else '-'
- 
-    # Concepto: tipo text. Columnas de mes: presentation='markdown' para renderizar HTML inline
+
+    # Columnas dinámicas: primera es "Concepto", el resto son los meses
     columns_table = []
     for c in display_df.columns:
         if c == 'Concepto':
-            columns_table.append({"name": "Concepto", "id": c, "type": "text"})
+            columns_table.append({"name": "Concepto", "id": "Concepto", "type": "text"})
         else:
-            columns_table.append({"name": c, "id": c, "type": "text",
-                                   "presentation": "markdown"})
- 
+            columns_table.append({"name": c, "id": c, "type": "numeric",
+                                   "format": Format(precision=2, scheme=Scheme.fixed, group=Group.yes, symbol=Symbol.yes)})
+
+    # Formatear porcentajes: multiplicar x100 las filas que tengan "%" en el nombre del concepto
+    pct_rows = [r for r in display_df['Concepto'].tolist() if '%' in str(r)]
+    for col in display_df.columns:
+        if col == 'Concepto':
+            continue
+        for idx, row_val in enumerate(display_df['Concepto']):
+            if '%' in str(row_val):
+                v = display_df.at[idx, col]
+                if pd.notna(v):
+                    try:
+                        display_df.at[idx, col] = round(float(v) * 100, 2)
+                    except:
+                        pass
+
     fig = None
     if metric and metric in df.columns and not df.empty:
         df_graph = df.sort_values(by='Mes', key=lambda x: x.apply(obtener_clave_orden))
@@ -765,220 +570,15 @@ def update_views(df_json, tab, balance_subtab, metric, chart_type, meses, cols_s
             fig = go.Figure(go.Scatter(x=x, y=y, mode='lines+markers', marker={'size': 9, 'color': '#C9A227', 'line': {'width': 2, 'color': '#0B2D5B'}}, line={'color':'#0B2D5B', 'width': 3}))
         else:
             fig = go.Figure(go.Bar(x=x, y=y, marker_color='#0B2D5B', marker_line_color='#C9A227', marker_line_width=1.5))
- 
+
         fig.update_yaxes(tickformat='.1%' if '%' in metric else '$,')
         fig.update_layout(title={'text': f"Evolución de {metric} ({filtro_tipo})", 'font': {'size': 18, 'color': '#0B2D5B', 'family': 'Segoe UI'}}, margin={'t':50,'b':40, 'l': 60, 'r': 40}, hovermode='x unified', plot_bgcolor='#FFFFFF', paper_bgcolor='#FFFFFF', xaxis={'gridcolor': '#F1F5F9'}, yaxis={'gridcolor': '#F1F5F9'})
- 
+
     graph = dcc.Graph(figure=fig, config={'displayModeBar': False}) if fig else html.Div()
- 
-    # Estilos dinámicos por fila: filas % en gris/itálica, filas alternas en gris claro
-    style_data_cond = [{'if': {'row_index': 'odd'}, 'backgroundColor': '#F8FAFC'}]
-    for idx in pct_concepto_indices:
-        style_data_cond.append({
-            'if': {'row_index': idx},
-            'color': '#64748B', 'fontStyle': 'italic', 'backgroundColor': '#F1F5F9'
-        })
- 
-    return columns_table, display_df.to_dict('records'), graph, style_data_cond
- 
- 
-# ── Mostrar/ocultar panel de comparación según pestaña activa ──────────────
-@app.callback(
-    Output('comparacion-container', 'style'),
-    Input('report-tab', 'value')
-)
-def toggle_comparacion(tab):
-    if tab == 'mensual':
-        return {'padding': '20px 15px 0 15px', 'display': 'block'}
-    return {'padding': '20px 15px 0 15px', 'display': 'none'}
- 
- 
-# ── Poblar los dropdowns de mes con los meses disponibles ───────────────────
-@app.callback(
-    Output('comp-mes-a', 'options'),
-    Output('comp-mes-b', 'options'),
-    Input('df-store', 'data')
-)
-def poblar_dropdowns_comparacion(df_json):
-    if not df_json:
-        return [], []
-    try:
-        df = pd.read_json(io.StringIO(df_json), orient='split')
-    except:
-        df = pd.read_json(df_json, orient='split')
- 
-    df_mens = df[df['Tipo_Reporte'] == 'Mensual']
-    meses = sorted(df_mens['Mes'].unique(), key=obtener_clave_orden)
-    opciones = [{'label': m, 'value': m} for m in meses]
-    return opciones, opciones
- 
- 
-# ── Generar tabla + gráfico de comparación al pulsar el botón ───────────────
-@app.callback(
-    Output('comparacion-resultado', 'children'),
-    Input('btn-comparar', 'n_clicks'),
-    State('df-store', 'data'),
-    State('comp-mes-a', 'value'),
-    State('comp-mes-b', 'value'),
-    prevent_initial_call=True
-)
-def generar_comparacion(n_clicks, df_json, mes_a, mes_b):
-    if not df_json or not mes_a or not mes_b:
-        return html.Div('Selecciona ambos meses para comparar.',
-                        style={'color': '#94A3B8', 'padding': '12px', 'fontStyle': 'italic'})
-    if mes_a == mes_b:
-        return html.Div('Selecciona dos meses diferentes.',
-                        style={'color': '#EF4444', 'padding': '12px', 'fontWeight': '600'})
- 
-    try:
-        df = pd.read_json(io.StringIO(df_json), orient='split')
-    except:
-        df = pd.read_json(df_json, orient='split')
- 
-    df_mens = df[df['Tipo_Reporte'] == 'Mensual'].drop('Tipo_Reporte', axis=1, errors='ignore')
-    df_mens = df_mens.dropna(axis=1, how='all')
- 
-    fila_a = df_mens[df_mens['Mes'] == mes_a]
-    fila_b = df_mens[df_mens['Mes'] == mes_b]
- 
-    if fila_a.empty or fila_b.empty:
-        return html.Div('No se encontraron datos para los meses seleccionados.',
-                        style={'color': '#EF4444', 'padding': '12px'})
- 
-    conceptos = [c for c in df_mens.columns if c != 'Mes']
- 
-    # Separar conceptos monetarios y de porcentaje
-    conceptos_dinero = [c for c in conceptos if '%' not in c]
-    conceptos_pct    = [c for c in conceptos if '%' in c]
- 
-    # ── Construir tabla de comparación ─────────────────────────────────────
-    filas_tabla = []
-    graf_conceptos, graf_a, graf_b = [], [], []
- 
-    for c in conceptos:
-        es_pct = '%' in c
-        try:
-            val_a = float(fila_a[c].values[0])
-            val_b = float(fila_b[c].values[0])
-        except:
-            val_a, val_b = 0.0, 0.0
- 
-        if es_pct:
-            fmt_a   = f"{val_a * 100:,.2f}%"
-            fmt_b   = f"{val_b * 100:,.2f}%"
-            diff    = (val_b - val_a) * 100
-            fmt_dif = f"{'+' if diff >= 0 else ''}{diff:,.2f} pp"
-            color_dif = '#10B981' if diff >= 0 else '#EF4444'
-            variacion = '-'
-        else:
-            def fp(n):
-                s = f"{abs(n):,.2f}"
-                return f"$ -{s}" if n < 0 else f"$  {s}"
-            fmt_a = fp(val_a)
-            fmt_b = fp(val_b)
-            diff  = val_b - val_a
-            fmt_dif = (f"$ +{abs(diff):,.2f}" if diff >= 0 else f"$ -{abs(diff):,.2f}")
-            color_dif = '#10B981' if diff >= 0 else '#EF4444'
-            variacion = (f"+{(diff/val_a*100):,.1f}%" if val_a != 0 else 'N/A')
-            graf_conceptos.append(c)
-            graf_a.append(val_a)
-            graf_b.append(val_b)
- 
-        filas_tabla.append({
-            'Concepto': c,
-            mes_a: fmt_a,
-            mes_b: fmt_b,
-            'Diferencia': fmt_dif,
-            '% Variación': variacion,
-            '_color_dif': color_dif,
-            '_es_pct': es_pct
-        })
- 
-    # Estilos condicionales por fila
-    style_rows = []
-    for idx, fila in enumerate(filas_tabla):
-        color = fila['_color_dif']
-        if fila['_es_pct']:
-            style_rows.append({'if': {'row_index': idx}, 'color': '#64748B',
-                                'fontStyle': 'italic', 'backgroundColor': '#F8FAFC'})
-        style_rows.append({'if': {'row_index': idx, 'column_id': 'Diferencia'},
-                           'color': color, 'fontWeight': '700'})
-        style_rows.append({'if': {'row_index': idx, 'column_id': '% Variación'},
-                           'color': color, 'fontWeight': '700'})
- 
-    # Limpiar columnas auxiliares
-    data_tabla = [{k: v for k, v in f.items() if not k.startswith('_')} for f in filas_tabla]
- 
-    columnas_tabla = [
-        {'name': 'Concepto',     'id': 'Concepto',     'type': 'text'},
-        {'name': mes_a,          'id': mes_a,           'type': 'text'},
-        {'name': mes_b,          'id': mes_b,           'type': 'text'},
-        {'name': 'Diferencia',   'id': 'Diferencia',    'type': 'text'},
-        {'name': '% Variación',  'id': '% Variación',   'type': 'text'},
-    ]
- 
-    tabla = dash_table.DataTable(
-        columns=columnas_tabla,
-        data=data_tabla,
-        style_table={'overflowX': 'auto', 'borderRadius': '8px', 'border': '1px solid #E2E8F0'},
-        style_cell={
-            'textAlign': 'right', 'padding': '10px 14px',
-            'fontFamily': 'Segoe UI, sans-serif', 'fontSize': '13px',
-            'fontWeight': '600', 'color': '#1E293B', 'border': '1px solid #E2E8F0',
-            'minWidth': '130px', 'whiteSpace': 'nowrap'
-        },
-        style_cell_conditional=[
-            {'if': {'column_id': 'Concepto'}, 'textAlign': 'left',
-             'fontWeight': '800', 'color': '#0B2D5B',
-             'backgroundColor': '#F8FAFC', 'minWidth': '200px'}
-        ],
-        style_header={
-            'backgroundColor': '#0B2D5B', 'color': 'white',
-            'fontWeight': '700', 'textAlign': 'center',
-            'border': '1px solid #0B2D5B', 'fontSize': '13px'
-        },
-        style_data_conditional=style_rows,
-        page_action='native', page_size=20
-    )
- 
-    # ── Gráfico de barras agrupadas solo para conceptos monetarios ──────────
-    fig_comp = go.Figure()
-    fig_comp.add_trace(go.Bar(
-        name=mes_a, x=graf_conceptos, y=graf_a,
-        marker_color='#0B2D5B', marker_line_color='#C9A227', marker_line_width=1.5
-    ))
-    fig_comp.add_trace(go.Bar(
-        name=mes_b, x=graf_conceptos, y=graf_b,
-        marker_color='#C9A227', marker_line_color='#0B2D5B', marker_line_width=1.5
-    ))
-    fig_comp.update_layout(
-        title={'text': f'Comparación: {mes_a}  vs  {mes_b}',
-               'font': {'size': 16, 'color': '#0B2D5B', 'family': 'Segoe UI'}},
-        barmode='group',
-        plot_bgcolor='#FFFFFF', paper_bgcolor='#FFFFFF',
-        xaxis={'gridcolor': '#F1F5F9', 'tickangle': -30},
-        yaxis={'gridcolor': '#F1F5F9', 'tickprefix': '$', 'tickformat': ',.0f'},
-        legend={'orientation': 'h', 'y': 1.12, 'x': 0.5, 'xanchor': 'center'},
-        margin={'t': 70, 'b': 80, 'l': 60, 'r': 20},
-        height=400
-    )
- 
-    return html.Div([
-        # Tabla
-        html.Div([
-            html.Div(f'{mes_a}  ⚖️  {mes_b}', style={
-                'fontWeight': '700', 'color': '#0B2D5B', 'fontSize': '14px',
-                'marginBottom': '12px', 'paddingBottom': '8px',
-                'borderBottom': '2px solid #C9A227'
-            }),
-            tabla
-        ], style={'marginBottom': '28px'}),
- 
-        # Gráfico
-        dcc.Graph(figure=fig_comp, config={'displayModeBar': False})
-    ])
- 
- 
+
+    return columns_table, display_df.to_dict('records'), graph
+
+
 if __name__ == '__main__':
     host = os.environ.get('DASH_HOST', '0.0.0.0')
     port = int(os.environ.get('DASH_PORT', 8050))
