@@ -450,6 +450,62 @@ app.layout = html.Div([
         html.Div(id='graph-container', style={'width': '100%', 'background': '#FFFFFF', 'borderRadius': '12px', 'padding': '15px', 'boxShadow': '0 1px 3px rgba(0,0,0,0.05)'})
     ], style={'padding': '0 15px'}),
  
+    # PANEL DE COMPARACIÓN MENSUAL (solo visible en pestaña Mensual)
+    html.Div(id='comparacion-container', children=[
+        html.Div([
+            # Título del panel
+            html.Div([
+                html.Span('⚖️', style={'fontSize': '20px', 'marginRight': '10px'}),
+                html.Span('Comparación entre Meses', style={
+                    'fontWeight': '700', 'fontSize': '16px', 'color': '#0B2D5B'
+                })
+            ], style={'marginBottom': '16px', 'display': 'flex', 'alignItems': 'center'}),
+ 
+            # Selectores de mes A y mes B
+            html.Div([
+                html.Div([
+                    html.Label('Mes Base', style={
+                        'fontWeight': '600', 'color': '#1E293B', 'marginBottom': '6px',
+                        'display': 'block', 'fontSize': '13px'
+                    }),
+                    dcc.Dropdown(id='comp-mes-a', placeholder='Selecciona mes base...',
+                                 clearable=False,
+                                 style={'fontWeight': '600'})
+                ], style={'width': '30%', 'display': 'inline-block', 'marginRight': '3%'}),
+ 
+                html.Div([
+                    html.Label('Mes a Comparar', style={
+                        'fontWeight': '600', 'color': '#1E293B', 'marginBottom': '6px',
+                        'display': 'block', 'fontSize': '13px'
+                    }),
+                    dcc.Dropdown(id='comp-mes-b', placeholder='Selecciona mes a comparar...',
+                                 clearable=False,
+                                 style={'fontWeight': '600'})
+                ], style={'width': '30%', 'display': 'inline-block', 'marginRight': '3%'}),
+ 
+                html.Div([
+                    html.Label(' ', style={'display': 'block', 'marginBottom': '6px'}),
+                    html.Button('Comparar', id='btn-comparar',
+                        style={
+                            'backgroundColor': '#0B2D5B', 'color': 'white',
+                            'border': 'none', 'borderRadius': '8px',
+                            'padding': '10px 28px', 'fontWeight': '700',
+                            'fontSize': '14px', 'cursor': 'pointer',
+                            'boxShadow': '0 2px 4px rgba(0,0,0,0.15)'
+                        })
+                ], style={'width': '15%', 'display': 'inline-block', 'verticalAlign': 'bottom'}),
+            ], style={'marginBottom': '20px'}),
+ 
+            # Resultado de comparación
+            html.Div(id='comparacion-resultado')
+ 
+        ], style={
+            'background': '#FFFFFF', 'borderRadius': '12px',
+            'padding': '24px', 'boxShadow': '0 1px 3px rgba(0,0,0,0.07)',
+            'border': '1.5px solid #E2E8F0'
+        })
+    ], style={'padding': '20px 15px 0 15px', 'display': 'none'}),
+ 
     dcc.Store(id='df-store')
 ], style={'width':'100%', 'maxWidth':'100%', 'margin':'0', 'boxSizing': 'border-box'})
  
@@ -720,6 +776,203 @@ def update_views(df_json, tab, balance_subtab, metric, chart_type, meses, cols_s
         })
  
     return columns_table, display_df.to_dict('records'), graph, style_data_cond
+ 
+ 
+# ── Mostrar/ocultar panel de comparación según pestaña activa ──────────────
+@app.callback(
+    Output('comparacion-container', 'style'),
+    Input('report-tab', 'value')
+)
+def toggle_comparacion(tab):
+    if tab == 'mensual':
+        return {'padding': '20px 15px 0 15px', 'display': 'block'}
+    return {'padding': '20px 15px 0 15px', 'display': 'none'}
+ 
+ 
+# ── Poblar los dropdowns de mes con los meses disponibles ───────────────────
+@app.callback(
+    Output('comp-mes-a', 'options'),
+    Output('comp-mes-b', 'options'),
+    Input('df-store', 'data')
+)
+def poblar_dropdowns_comparacion(df_json):
+    if not df_json:
+        return [], []
+    try:
+        df = pd.read_json(io.StringIO(df_json), orient='split')
+    except:
+        df = pd.read_json(df_json, orient='split')
+ 
+    df_mens = df[df['Tipo_Reporte'] == 'Mensual']
+    meses = sorted(df_mens['Mes'].unique(), key=obtener_clave_orden)
+    opciones = [{'label': m, 'value': m} for m in meses]
+    return opciones, opciones
+ 
+ 
+# ── Generar tabla + gráfico de comparación al pulsar el botón ───────────────
+@app.callback(
+    Output('comparacion-resultado', 'children'),
+    Input('btn-comparar', 'n_clicks'),
+    State('df-store', 'data'),
+    State('comp-mes-a', 'value'),
+    State('comp-mes-b', 'value'),
+    prevent_initial_call=True
+)
+def generar_comparacion(n_clicks, df_json, mes_a, mes_b):
+    if not df_json or not mes_a or not mes_b:
+        return html.Div('Selecciona ambos meses para comparar.',
+                        style={'color': '#94A3B8', 'padding': '12px', 'fontStyle': 'italic'})
+    if mes_a == mes_b:
+        return html.Div('Selecciona dos meses diferentes.',
+                        style={'color': '#EF4444', 'padding': '12px', 'fontWeight': '600'})
+ 
+    try:
+        df = pd.read_json(io.StringIO(df_json), orient='split')
+    except:
+        df = pd.read_json(df_json, orient='split')
+ 
+    df_mens = df[df['Tipo_Reporte'] == 'Mensual'].drop('Tipo_Reporte', axis=1, errors='ignore')
+    df_mens = df_mens.dropna(axis=1, how='all')
+ 
+    fila_a = df_mens[df_mens['Mes'] == mes_a]
+    fila_b = df_mens[df_mens['Mes'] == mes_b]
+ 
+    if fila_a.empty or fila_b.empty:
+        return html.Div('No se encontraron datos para los meses seleccionados.',
+                        style={'color': '#EF4444', 'padding': '12px'})
+ 
+    conceptos = [c for c in df_mens.columns if c != 'Mes']
+ 
+    # Separar conceptos monetarios y de porcentaje
+    conceptos_dinero = [c for c in conceptos if '%' not in c]
+    conceptos_pct    = [c for c in conceptos if '%' in c]
+ 
+    # ── Construir tabla de comparación ─────────────────────────────────────
+    filas_tabla = []
+    graf_conceptos, graf_a, graf_b = [], [], []
+ 
+    for c in conceptos:
+        es_pct = '%' in c
+        try:
+            val_a = float(fila_a[c].values[0])
+            val_b = float(fila_b[c].values[0])
+        except:
+            val_a, val_b = 0.0, 0.0
+ 
+        if es_pct:
+            fmt_a   = f"{val_a * 100:,.2f}%"
+            fmt_b   = f"{val_b * 100:,.2f}%"
+            diff    = (val_b - val_a) * 100
+            fmt_dif = f"{'+' if diff >= 0 else ''}{diff:,.2f} pp"
+            color_dif = '#10B981' if diff >= 0 else '#EF4444'
+            variacion = '-'
+        else:
+            def fp(n):
+                s = f"{abs(n):,.2f}"
+                return f"$ -{s}" if n < 0 else f"$  {s}"
+            fmt_a = fp(val_a)
+            fmt_b = fp(val_b)
+            diff  = val_b - val_a
+            fmt_dif = (f"$ +{abs(diff):,.2f}" if diff >= 0 else f"$ -{abs(diff):,.2f}")
+            color_dif = '#10B981' if diff >= 0 else '#EF4444'
+            variacion = (f"+{(diff/val_a*100):,.1f}%" if val_a != 0 else 'N/A')
+            graf_conceptos.append(c)
+            graf_a.append(val_a)
+            graf_b.append(val_b)
+ 
+        filas_tabla.append({
+            'Concepto': c,
+            mes_a: fmt_a,
+            mes_b: fmt_b,
+            'Diferencia': fmt_dif,
+            '% Variación': variacion,
+            '_color_dif': color_dif,
+            '_es_pct': es_pct
+        })
+ 
+    # Estilos condicionales por fila
+    style_rows = []
+    for idx, fila in enumerate(filas_tabla):
+        color = fila['_color_dif']
+        if fila['_es_pct']:
+            style_rows.append({'if': {'row_index': idx}, 'color': '#64748B',
+                                'fontStyle': 'italic', 'backgroundColor': '#F8FAFC'})
+        style_rows.append({'if': {'row_index': idx, 'column_id': 'Diferencia'},
+                           'color': color, 'fontWeight': '700'})
+        style_rows.append({'if': {'row_index': idx, 'column_id': '% Variación'},
+                           'color': color, 'fontWeight': '700'})
+ 
+    # Limpiar columnas auxiliares
+    data_tabla = [{k: v for k, v in f.items() if not k.startswith('_')} for f in filas_tabla]
+ 
+    columnas_tabla = [
+        {'name': 'Concepto',     'id': 'Concepto',     'type': 'text'},
+        {'name': mes_a,          'id': mes_a,           'type': 'text'},
+        {'name': mes_b,          'id': mes_b,           'type': 'text'},
+        {'name': 'Diferencia',   'id': 'Diferencia',    'type': 'text'},
+        {'name': '% Variación',  'id': '% Variación',   'type': 'text'},
+    ]
+ 
+    tabla = dash_table.DataTable(
+        columns=columnas_tabla,
+        data=data_tabla,
+        style_table={'overflowX': 'auto', 'borderRadius': '8px', 'border': '1px solid #E2E8F0'},
+        style_cell={
+            'textAlign': 'right', 'padding': '10px 14px',
+            'fontFamily': 'Segoe UI, sans-serif', 'fontSize': '13px',
+            'fontWeight': '600', 'color': '#1E293B', 'border': '1px solid #E2E8F0',
+            'minWidth': '130px', 'whiteSpace': 'nowrap'
+        },
+        style_cell_conditional=[
+            {'if': {'column_id': 'Concepto'}, 'textAlign': 'left',
+             'fontWeight': '800', 'color': '#0B2D5B',
+             'backgroundColor': '#F8FAFC', 'minWidth': '200px'}
+        ],
+        style_header={
+            'backgroundColor': '#0B2D5B', 'color': 'white',
+            'fontWeight': '700', 'textAlign': 'center',
+            'border': '1px solid #0B2D5B', 'fontSize': '13px'
+        },
+        style_data_conditional=style_rows,
+        page_action='native', page_size=20
+    )
+ 
+    # ── Gráfico de barras agrupadas solo para conceptos monetarios ──────────
+    fig_comp = go.Figure()
+    fig_comp.add_trace(go.Bar(
+        name=mes_a, x=graf_conceptos, y=graf_a,
+        marker_color='#0B2D5B', marker_line_color='#C9A227', marker_line_width=1.5
+    ))
+    fig_comp.add_trace(go.Bar(
+        name=mes_b, x=graf_conceptos, y=graf_b,
+        marker_color='#C9A227', marker_line_color='#0B2D5B', marker_line_width=1.5
+    ))
+    fig_comp.update_layout(
+        title={'text': f'Comparación: {mes_a}  vs  {mes_b}',
+               'font': {'size': 16, 'color': '#0B2D5B', 'family': 'Segoe UI'}},
+        barmode='group',
+        plot_bgcolor='#FFFFFF', paper_bgcolor='#FFFFFF',
+        xaxis={'gridcolor': '#F1F5F9', 'tickangle': -30},
+        yaxis={'gridcolor': '#F1F5F9', 'tickprefix': '$', 'tickformat': ',.0f'},
+        legend={'orientation': 'h', 'y': 1.12, 'x': 0.5, 'xanchor': 'center'},
+        margin={'t': 70, 'b': 80, 'l': 60, 'r': 20},
+        height=400
+    )
+ 
+    return html.Div([
+        # Tabla
+        html.Div([
+            html.Div(f'{mes_a}  ⚖️  {mes_b}', style={
+                'fontWeight': '700', 'color': '#0B2D5B', 'fontSize': '14px',
+                'marginBottom': '12px', 'paddingBottom': '8px',
+                'borderBottom': '2px solid #C9A227'
+            }),
+            tabla
+        ], style={'marginBottom': '28px'}),
+ 
+        # Gráfico
+        dcc.Graph(figure=fig_comp, config={'displayModeBar': False})
+    ])
  
  
 if __name__ == '__main__':
