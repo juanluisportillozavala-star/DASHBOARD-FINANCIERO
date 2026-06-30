@@ -50,13 +50,14 @@ CATALOGO_BALANCE = {
     'Equipo_de_Computo': ['154.01.001', '154.01.002', '156.01.001'],
     'Depreciacion_Acumulada': ['171.03.001', '171.03.002', '171.05.001'],
     
-    'Proveedores': ['201.01.001', '201.03.001'],
+    'Proveedores': ['201.01.001'],
+    'Acreedores_Diversos': ['201.03.001', '205.02.001', '205.06.002'],
     'Impuestos_por_Pagar': [
         '208.01.001', '209.01.001', '209.01.002', '213.01.001', 
         '213.03.001', '216.01.001', '216.04.001', '216.05.001', 
         '216.10.001', '216.10.002', '216.11.001', '216.12.001', '216.12.002'
     ],
-    'Otros_Pasivos': ['205.02.001', '205.06.002', '206.01.001', '210.01.001'],
+    'Otros_Pasivos': ['206.01.001', '210.01.001'],
     
     'Capital_Social': ['301.01.001'],
     'Resultados_Acumulados_Grupos': ['304.01', '304.02'] 
@@ -254,9 +255,10 @@ def procesar_archivo_bytes(content, filename):
     total_activo = activo_circulante + activo_fijo
  
     proveedores = obtener_saldo_exacto(df, CATALOGO_BALANCE['Proveedores'], es_acreedora=True)
+    acreedores_diversos = obtener_saldo_exacto(df, CATALOGO_BALANCE['Acreedores_Diversos'], es_acreedora=True)
     imp_pagar = obtener_saldo_exacto(df, CATALOGO_BALANCE['Impuestos_por_Pagar'], es_acreedora=True)
     otros_pasivos = obtener_saldo_exacto(df, CATALOGO_BALANCE['Otros_Pasivos'], es_acreedora=True)
-    pasivo_circulante = proveedores + imp_pagar + otros_pasivos
+    pasivo_circulante = proveedores + acreedores_diversos + imp_pagar + otros_pasivos
     
     capital_social = obtener_saldo_exacto(df, CATALOGO_BALANCE['Capital_Social'], es_acreedora=True)
     utilidad_ejercicio = utilidad_neta_acum 
@@ -277,6 +279,7 @@ def procesar_archivo_bytes(content, filename):
         "Total Activo Fijo": activo_fijo, "% Act. Fijo": activo_fijo/total_activo if total_activo else 0,
         "Total Activo": total_activo,
         "Proveedores": proveedores, "% Proveedores": proveedores/total_pasivo_capital if total_pasivo_capital else 0,
+        "Acreedores Diversos": acreedores_diversos, "% Acreedores Div.": acreedores_diversos/total_pasivo_capital if total_pasivo_capital else 0,
         "Impuestos por Pagar": imp_pagar, "% Imp. Pagar": imp_pagar/total_pasivo_capital if total_pasivo_capital else 0,
         "Otros Pasivos": otros_pasivos, "% Otros Pasivos": otros_pasivos/total_pasivo_capital if total_pasivo_capital else 0,
         "Total Pasivo": pasivo_circulante, "% Total Pasivo": pasivo_circulante/total_pasivo_capital if total_pasivo_capital else 0,
@@ -528,6 +531,7 @@ BALANCE_SECCIONES = {
     ],
     'pasivo_circulante': [
         'Proveedores', '% Proveedores',
+        'Acreedores Diversos', '% Acreedores Div.',
         'Impuestos por Pagar', '% Imp. Pagar',
         'Otros Pasivos', '% Otros Pasivos',
         'Total Pasivo', '% Total Pasivo',
