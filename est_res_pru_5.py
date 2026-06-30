@@ -141,36 +141,36 @@ def calcular_otras_cuentas_cobrar(df, grupos):
  
 def calcular_resultados_acumulados(df, grupos):
     """
-    Para cuentas 304.01 y 304.02: Suma columna H (Crédito) y resta columna G (Débito).
-    Adicionalmente, resta la columna H donde el nombre diga 'GANACIAS/PERDIDAS NO DISTRIBUIDAS'.
+    Lógica exacta para Resultados Acumulados:
+    - Fila de grupo '304.01 ...' (col B empieza con '304.01'): suma H (col[7]), resta G (col[6])
+    - Fila de grupo '304.02 ...' (col B empieza con '304.02'): suma H (col[7]), resta G (col[6])
+    - Fila 'GANANCIAS/PERDIDAS NO DISTRIBUIDAS' (col B): resta H (col[7])
+    Se busca por nombre en col[1] porque estas son filas de totalizadores de grupo
+    (no tienen código propio en col[0]).
     """
     total = 0.0
-    
-    # 1. Suma H y resta G para las cuentas 304.xx
+ 
     for i in range(len(df)):
-        codigo = str(df.iat[i, 0]).strip()
-        if pd.notna(df.iat[i, 0]) and codigo != 'nan' and codigo != '':
-            if any(codigo.startswith(grupo) for grupo in grupos):
-                g_debito = df.iat[i, 6]
-                h_credito = df.iat[i, 7]
-                
-                g_val = float(g_debito) if pd.notna(g_debito) and isinstance(g_debito, (int, float)) else 0.0
-                h_val = float(h_credito) if pd.notna(h_credito) and isinstance(h_credito, (int, float)) else 0.0
-                
-                # Fórmula solicitada: Suma H, Resta G (+ H - G)
-                total += (h_val - g_val)
-                
-    # 2. Restar columna H para 'GANACIAS/PERDIDAS NO DISTRIBUIDAS'
-    for i in range(len(df)):
-        nombre_cuenta = str(df.iat[i, 1]).strip().upper()
-        # Buscamos variaciones del texto como "GANACIAS" o "GANANCIAS"
-        if "NO DISTRIBUIDAS" in nombre_cuenta and ("GANANCIA" in nombre_cuenta or "GANACIA" in nombre_cuenta or "PERDIDA" in nombre_cuenta):
-            h_credito = df.iat[i, 7]
-            h_val = float(h_credito) if pd.notna(h_credito) and isinstance(h_credito, (int, float)) else 0.0
-            
-            # Fórmula solicitada: Restar H
-            total -= h_val
-            
+        nombre = str(df.iat[i, 1]).strip().upper()
+        nombre_raw = str(df.iat[i, 1]).strip()
+ 
+        def _g(): 
+            v = df.iat[i, 6]
+            return float(v) if pd.notna(v) and isinstance(v, (int, float)) else 0.0
+        def _h():
+            v = df.iat[i, 7]
+            return float(v) if pd.notna(v) and isinstance(v, (int, float)) else 0.0
+ 
+        # Totalizador del grupo 304.01 (formato: "304.01 Utilidad de ejercicios anteriores")
+        if nombre_raw.startswith('304.01'):
+            total += (_h() - _g())
+ 
+        # Totalizador del grupo 304.02 (formato: "304.02 Pérdida de ejercicios anteriores")
+        elif nombre_raw.startswith('304.02'):
+            total += (_h() - _g())
+ 
+        # GANANCIAS/PERDIDAS NO DISTRIBUIDAS — no se toma en cuenta
+ 
     return total
  
  
