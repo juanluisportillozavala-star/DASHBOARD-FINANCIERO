@@ -770,9 +770,9 @@ def update_views(df_json, tab, balance_subtab, metric, chart_type, meses, cols_s
     #   - Negativos: signo menos antes del número (no paréntesis)
     def fmt_peso(num):
         if num < 0:
-            numero_str = f"-{abs(num):,.2f}"
+            numero_str = f"-{abs(num):,.0f}"
         else:
-            numero_str = f"{num:,.2f}"
+            numero_str = f"{num:,.0f}"
         return (
             '<div style="display:flex;justify-content:space-between;'
             'font-weight:700;width:100%;">'
@@ -923,12 +923,12 @@ def generar_comparacion(n_clicks, df_json, mes_a, mes_b):
             variacion = '-'
         else:
             def fp(n):
-                s = f"{abs(n):,.2f}"
+                s = f"{abs(n):,.0f}"
                 return f"$ -{s}" if n < 0 else f"$  {s}"
             fmt_a = fp(val_a)
             fmt_b = fp(val_b)
             diff  = val_b - val_a
-            fmt_dif = (f"$ +{abs(diff):,.2f}" if diff >= 0 else f"$ -{abs(diff):,.2f}")
+            fmt_dif = (f"$ +{abs(diff):,.0f}" if diff >= 0 else f"$ -{abs(diff):,.0f}")
             color_dif = '#10B981' if diff >= 0 else '#EF4444'
             variacion = (f"+{(diff/val_a*100):,.1f}%" if val_a != 0 else 'N/A')
             graf_conceptos.append(c)
@@ -1114,12 +1114,12 @@ def generar_comp_balance(n_clicks, df_json, mes_a, mes_b):
             variacion = '-'
         else:
             def fp(n):
-                s = f"{abs(n):,.2f}"
+                s = f"{abs(n):,.0f}"
                 return f"$ -{s}" if n < 0 else f"$  {s}"
             fmt_a = fp(val_a)
             fmt_b = fp(val_b)
             diff  = val_b - val_a
-            fmt_dif = (f"$ +{abs(diff):,.2f}" if diff >= 0 else f"$ -{abs(diff):,.2f}")
+            fmt_dif = (f"$ +{abs(diff):,.0f}" if diff >= 0 else f"$ -{abs(diff):,.0f}")
             color_dif = '#10B981' if diff >= 0 else '#EF4444'
             variacion = (f"+{(diff/val_a*100):,.1f}%" if val_a != 0 else 'N/A')
             graf_conceptos.append(c)
@@ -1181,13 +1181,22 @@ def generar_comp_balance(n_clicks, df_json, mes_a, mes_b):
         page_action='native', page_size=25
     )
  
+    # Gráfico Balance: solo Total Activo Circulante, Total Pasivo y Total Capital Contable
+    CONCEPTOS_GRAF_BAL = ['Total Activo Circulante', 'Total Pasivo', 'Total Capital']
+    graf_bal_x, graf_bal_a, graf_bal_b = [], [], []
+    for c, va, vb in zip(graf_conceptos, graf_a, graf_b):
+        if c in CONCEPTOS_GRAF_BAL:
+            graf_bal_x.append(c)
+            graf_bal_a.append(va)
+            graf_bal_b.append(vb)
+ 
     fig_comp = go.Figure()
     fig_comp.add_trace(go.Bar(
-        name=mes_a, x=graf_conceptos, y=graf_a,
+        name=mes_a, x=graf_bal_x, y=graf_bal_a,
         marker_color='#0B2D5B', marker_line_color='#C9A227', marker_line_width=1.5
     ))
     fig_comp.add_trace(go.Bar(
-        name=mes_b, x=graf_conceptos, y=graf_b,
+        name=mes_b, x=graf_bal_x, y=graf_bal_b,
         marker_color='#C9A227', marker_line_color='#0B2D5B', marker_line_width=1.5
     ))
     fig_comp.update_layout(
@@ -1195,10 +1204,10 @@ def generar_comp_balance(n_clicks, df_json, mes_a, mes_b):
                'font': {'size': 16, 'color': '#0B2D5B', 'family': 'Segoe UI'}},
         barmode='group',
         plot_bgcolor='#FFFFFF', paper_bgcolor='#FFFFFF',
-        xaxis={'gridcolor': '#F1F5F9', 'tickangle': -30},
+        xaxis={'gridcolor': '#F1F5F9', 'tickangle': 0},
         yaxis={'gridcolor': '#F1F5F9', 'tickprefix': '$', 'tickformat': ',.0f'},
         legend={'orientation': 'h', 'y': 1.12, 'x': 0.5, 'xanchor': 'center'},
-        margin={'t': 70, 'b': 80, 'l': 60, 'r': 20},
+        margin={'t': 70, 'b': 60, 'l': 60, 'r': 20},
         height=400
     )
  
