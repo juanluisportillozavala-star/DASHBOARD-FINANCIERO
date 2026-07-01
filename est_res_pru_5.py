@@ -139,6 +139,16 @@ def calcular_otras_cuentas_cobrar(df, grupos):
                 total += (g_val - h_val)
     return total
  
+def obtener_compras_acum(df):
+    # Compras = movimiento Credito (indice 5) del totalizador 201.01
+    for i in range(len(df)):
+        nombre = str(df.iat[i, 1]).strip()
+        if nombre.startswith('201.01'):
+            v = df.iat[i, 5]
+            return float(v) if pd.notna(v) and isinstance(v, (int, float)) else 0.0
+    return 0.0
+ 
+ 
 def calcular_resultados_acumulados(df, grupos):
     """
     Lógica exacta para Resultados Acumulados:
@@ -172,6 +182,17 @@ def calcular_resultados_acumulados(df, grupos):
         # GANANCIAS/PERDIDAS NO DISTRIBUIDAS — no se toma en cuenta
  
     return total
+ 
+ 
+# --- Días acumulados por mes (para indicadores) ---
+def _dias_acumulados(mes_nombre):
+    DIAS_MES = {
+        'ENERO': 30, 'FEBRERO': 60, 'MARZO': 90, 'ABRIL': 120,
+        'MAYO': 150, 'JUNIO': 180, 'JULIO': 210, 'AGOSTO': 240,
+        'SEPTIEMBRE': 270, 'OCTUBRE': 300, 'NOVIEMBRE': 330, 'DICIEMBRE': 360
+    }
+    partes = str(mes_nombre).upper().split()
+    return DIAS_MES.get(partes[0], 30) if partes else 30
  
  
 # --- Procesador Principal del Excel ---
@@ -290,7 +311,34 @@ def procesar_archivo_bytes(content, filename):
         "Total Pasivo y Capital": total_pasivo_capital
     }
  
-    return data_acumulada, data_mensual, data_balance
+    # ==========================================
+    # 4. INDICADORES FINANCIEROS
+    # ==========================================
+    compras_acum   = obtener_compras_acum(df)
+    dias_acum      = _dias_acumulados(mes_nombre)
+ 
+    capital_trabajo     = activo_circulante - pasivo_circulante
+    razon_circulante    = total_activo / pasivo_circulante if pasivo_circulante else 0
+    prueba_acida        = (activo_circulante - inventarios) / pasivo_circulante if pasivo_circulante else 0
+    razon_endeudamiento = pasivo_circulante / total_activo if total_activo else 0
+    dias_cxc            = (cxc / ingresos_acum * dias_acum) if ingresos_acum else 0
+    dias_cxp            = (proveedores / compras_acum * dias_acum) if compras_acum else 0
+    rotacion_inv        = (inventarios / costos_acum * dias_acum) if costos_acum else 0
+    ciclo_efectivo      = dias_cxc - dias_cxp + rotacion_inv
+ 
+    data_indicadores = {
+        'Mes': mes_nombre, 'Tipo_Reporte': 'Indicadores',
+        'Capital de Trabajo':       capital_trabajo,
+        'Razón Circulante':         razon_circulante,
+        'Prueba Ácida':             prueba_acida,
+        'Razón de Endeudamiento':   razon_endeudamiento,
+        'Días CxC':                 dias_cxc,
+        'Días CxP':                 dias_cxp,
+        'Rotación de Inventario':   rotacion_inv,
+        'Ciclo del Efectivo':       ciclo_efectivo,
+    }
+ 
+    return data_acumulada, data_mensual, data_balance, data_indicadores
  
  
 # ---------------------- APP Dash ----------------------
@@ -381,7 +429,8 @@ app.layout = html.Div([
     dcc.Tabs(id='report-tab', value='acumulado', children=[
         dcc.Tab(label='Estado de Resultados Acumulado', value='acumulado', style=estilo_tab, selected_style=estilo_tab_seleccionada),
         dcc.Tab(label='Estado de Resultados Mensual', value='mensual', style=estilo_tab, selected_style=estilo_tab_seleccionada),
-        dcc.Tab(label='Balance General', value='balance', style=estilo_tab, selected_style=estilo_tab_seleccionada)
+        dcc.Tab(label='Balance General', value='balance', style=estilo_tab, selected_style=estilo_tab_seleccionada),
+        dcc.Tab(label='Indicadores Financieros', value='indicadores', style=estilo_tab, selected_style=estilo_tab_seleccionada)
     ], style={'margin': '0 15px'}),
  
     # SUB-SECCIONES DEL BALANCE — selección múltiple con botones toggle
@@ -624,8 +673,8 @@ def handle_upload(upload_contents, upload_names):
     
     for content, name in valid_files:
         try:
-            acum, mens, bal = procesar_archivo_bytes(content, name)
-            resultados.extend([acum, mens, bal])
+            acum, mens, bal, ind = procesar_archivo_bytes(content, name)
+            resultados.extend([acum, mens, bal, ind])
         except Exception as e:
             return None, html.Div(f"Error procesando {name}: {e}", style={'color': '#EF4444'}), []
  
@@ -662,17 +711,21 @@ def update_controls(df_json, tab):
     except:
         df = pd.read_json(df_json, orient='split')
         
-    filtro_tipo = "Balance" if tab == "balance" else ("Acumulado" if tab == "acumulado" else "Mensual")
+    filtro_tipo = "Balance" if tab == "balance" else ("Acumulado" if tab == "acumulado" else ("Mensual" if tab == "mensual" else "Indicadores"))
     df = df[df['Tipo_Reporte'] == filtro_tipo]
     
     df = df.dropna(axis=1, how='all')
     columnas_disponibles = [c for c in df.columns if c not in ['Mes', 'Tipo_Reporte']]
     
     metric_options = [{'label': m, 'value': m} for m in columnas_disponibles]
-    # En la vista transpuesta, "columnas visibles" filtra por conceptos (filas)
     col_options = [{'label': c, 'value': c} for c in columnas_disponibles]
     
-    default_metric = "Total Activo" if tab == "balance" else ("Utilidad Neta" if "Utilidad Neta" in columnas_disponibles else columnas_disponibles[0])
+    if tab == "balance":
+        default_metric = "Total Activo"
+    elif tab == "indicadores":
+        default_metric = columnas_disponibles[0] if columnas_disponibles else None
+    else:
+        default_metric = "Utilidad Neta" if "Utilidad Neta" in columnas_disponibles else (columnas_disponibles[0] if columnas_disponibles else None)
     
     return metric_options, default_metric, col_options, []
  
@@ -699,7 +752,7 @@ def update_views(df_json, tab, balance_subtab, metric, chart_type, meses, cols_s
     except:
         df = pd.read_json(df_json, orient='split')
     
-    filtro_tipo = "Balance" if tab == "balance" else ("Acumulado" if tab == "acumulado" else "Mensual")
+    filtro_tipo = "Balance" if tab == "balance" else ("Acumulado" if tab == "acumulado" else ("Mensual" if tab == "mensual" else "Indicadores"))
     df = df[df['Tipo_Reporte'] == filtro_tipo].dropna(axis=1, how='all')
     df = df.drop('Tipo_Reporte', axis=1, errors='ignore')
     
@@ -763,11 +816,12 @@ def update_views(df_json, tab, balance_subtab, metric, chart_type, meses, cols_s
     for col in mes_cols:
         display_df[col] = display_df[col].astype(object)
  
-    # Formatear celdas como HTML inline (permitido via markdown_options html:True):
-    #   - Dinero: <div style="display:flex;justify-content:space-between"><b>$</b><b>1,234.56</b></div>
-    #     → $ fijo a la izquierda, número a la derecha, igual que Excel
-    #   - Porcentaje: "45.23%" centrado en negrita
-    #   - Negativos: signo menos antes del número (no paréntesis)
+    # Formateo de celdas según el tipo de reporte
+    # Indicadores: ratios con 2 dec o días enteros; Dinero: $ sin decimales; %: porcentaje
+    INDICADORES_RATIO = {'Razón Circulante', 'Prueba Ácida', 'Razón de Endeudamiento'}
+    INDICADORES_DIAS  = {'Capital de Trabajo', 'Días CxC', 'Días CxP',
+                         'Rotación de Inventario', 'Ciclo del Efectivo'}
+ 
     def fmt_peso(num):
         if num < 0:
             numero_str = f"-{abs(num):,.0f}"
@@ -782,8 +836,28 @@ def update_views(df_json, tab, balance_subtab, metric, chart_type, meses, cols_s
     def fmt_pct(num):
         return f'<div style="text-align:right;font-weight:700">{num * 100:,.2f}%</div>'
  
+    def fmt_ratio(num):
+        return f'<div style="text-align:right;font-weight:700">{num:,.4f}</div>'
+ 
+    def fmt_dias(num):
+        return f'<div style="text-align:right;font-weight:700">{num:,.2f}</div>'
+ 
+    def fmt_capital_trabajo(num):
+        if num < 0:
+            numero_str = f"-{abs(num):,.0f}"
+        else:
+            numero_str = f"{num:,.0f}"
+        return (
+            '<div style="display:flex;justify-content:space-between;'
+            'font-weight:700;width:100%;">'
+            f'<span>$</span><span>{numero_str}</span></div>'
+        )
+ 
     for i, row_concepto in enumerate(display_df['Concepto'].tolist()):
         es_pct = '%' in str(row_concepto)
+        es_ratio = row_concepto in INDICADORES_RATIO
+        es_dias  = row_concepto in (INDICADORES_DIAS - {'Capital de Trabajo'})
+        es_cap_trabajo = row_concepto == 'Capital de Trabajo'
         for col in mes_cols:
             raw = display_df.at[i, col]
             try:
@@ -793,6 +867,12 @@ def update_views(df_json, tab, balance_subtab, metric, chart_type, meses, cols_s
                 num = float(raw)
                 if es_pct:
                     display_df.at[i, col] = fmt_pct(num)
+                elif es_ratio:
+                    display_df.at[i, col] = fmt_ratio(num)
+                elif es_dias:
+                    display_df.at[i, col] = fmt_dias(num)
+                elif es_cap_trabajo:
+                    display_df.at[i, col] = fmt_capital_trabajo(num)
                 else:
                     display_df.at[i, col] = fmt_peso(num)
             except (ValueError, TypeError):
