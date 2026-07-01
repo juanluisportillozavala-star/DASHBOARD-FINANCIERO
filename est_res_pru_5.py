@@ -680,49 +680,58 @@ def handle_upload(upload_contents, upload_names):
     )).reset_index(drop=True)
  
     indicadores_finales = []
-    hist_cxc   = []  # CxC de cada mes acumulado
-    hist_inv   = []  # Inventarios de cada mes acumulado
-    hist_prov  = []  # Proveedores de cada mes acumulado
-    hist_comp  = []  # Compras de cada mes (acumuladas)
+    hist_cxc  = []   # saldo CxC de cada mes (para PROMEDIO)
+    hist_inv  = []   # saldo Inventarios de cada mes (para PROMEDIO)
+    hist_prov = []   # saldo Proveedores de cada mes (para PROMEDIO)
+    hist_comp = []   # compras de cada mes (para SUMA acumulada)
+ 
+    # Días por mes — tabla fija según el Excel
+    DIAS_POR_MES = {
+        'ENERO': 30, 'FEBRERO': 60, 'MARZO': 90, 'ABRIL': 120,
+        'MAYO': 150, 'JUNIO': 180, 'JULIO': 210, 'AGOSTO': 240,
+        'SEPTIEMBRE': 270, 'OCTUBRE': 300, 'NOVIEMBRE': 330, 'DICIEMBRE': 360
+    }
  
     for _, row in raw_sorted.iterrows():
-        mes          = row['Mes']
-        cxc_val      = row['_cxc']         if pd.notna(row['_cxc'])        else 0.0
-        inv_val      = row['_inventarios']  if pd.notna(row['_inventarios']) else 0.0
-        act_circ     = row['_activo_circ']  if pd.notna(row['_activo_circ']) else 0.0
-        tot_activo   = row['_total_activo'] if pd.notna(row['_total_activo'])else 0.0
-        pasivo       = row['_pasivo']       if pd.notna(row['_pasivo'])      else 0.0
-        ing_acum     = row['_ingresos_acum']if pd.notna(row['_ingresos_acum'])else 0.0
-        cos_acum     = row['_costos_acum']  if pd.notna(row['_costos_acum']) else 0.0
-        comp_mes     = row['_compras_mes']  if pd.notna(row['_compras_mes']) else 0.0
+        mes        = row['Mes']
+        cxc_val    = float(row['_cxc'])          if pd.notna(row['_cxc'])         else 0.0
+        inv_val    = float(row['_inventarios'])   if pd.notna(row['_inventarios']) else 0.0
+        act_circ   = float(row['_activo_circ'])   if pd.notna(row['_activo_circ']) else 0.0
+        tot_activo = float(row['_total_activo'])  if pd.notna(row['_total_activo'])else 0.0
+        pasivo     = float(row['_pasivo'])        if pd.notna(row['_pasivo'])      else 0.0
+        ing_acum   = float(row['_ingresos_acum']) if pd.notna(row['_ingresos_acum'])else 0.0
+        cos_acum   = float(row['_costos_acum'])   if pd.notna(row['_costos_acum']) else 0.0
+        comp_mes   = float(row['_compras_mes'])   if pd.notna(row['_compras_mes']) else 0.0
  
+        # Acumular histórico
         hist_cxc.append(cxc_val)
         hist_inv.append(inv_val)
-        hist_prov.append(pasivo)    # usamos saldo de proveedores para CxP
+        hist_prov.append(pasivo)
         hist_comp.append(comp_mes)
  
-        n            = len(hist_cxc)          # número de meses acumulados
-        dias_n       = n * 30                 # días del período
+        # Días del período según el mes (tabla fija del Excel)
+        mes_upper = str(mes).upper().split()[0]  # ej: "ENERO" de "Enero 2026"
+        dias_n    = DIAS_POR_MES.get(mes_upper, len(hist_cxc) * 30)
  
-        prom_cxc     = sum(hist_cxc)  / n
-        prom_inv     = sum(hist_inv)  / n
-        prom_prov    = sum(hist_prov) / n
-        sum_comp     = sum(hist_comp)
+        n         = len(hist_cxc)
+        prom_cxc  = sum(hist_cxc)  / n   # AVERAGE(CxC de ene..mes actual)
+        prom_inv  = sum(hist_inv)  / n   # AVERAGE(Inventarios de ene..mes actual)
+        prom_prov = sum(hist_prov) / n   # AVERAGE(Proveedores de ene..mes actual)
+        sum_comp  = sum(hist_comp)        # SUM(Compras de ene..mes actual)
  
-        # Fórmulas exactas del Excel (Balance (2)):
-        # Capital de trabajo  = Activo Circ - Total Pasivo           (fila 13 - fila 29)
-        # Razón circulante    = Total Activo / Total Pasivo          (fila 20 / fila 29)
-        # Prueba ácida        = (Activo Circ - Inventarios) / Pasivo (fila 13 - 9) / 29
-        # Razón endeudamiento = Total Pasivo / Total Activo          (fila 29 / fila 20)
-        # Días CxC  = PROMEDIO(CxC meses) / Ingresos_acum * días_n
-        # Días CxP  = PROMEDIO(Proveedores) / SUM(Compras) * días_n
-        # Rot. inv  = PROMEDIO(Inventarios) / Costos_acum * días_n
-        # Ciclo     = Días CxC - Días CxP + Rot. inv
- 
+        # Fórmulas exactas del Excel (todas referenciadas a Balance (2)):
+        # Capital de trabajo  : f13 - f29  = Activo Circ - Total Pasivo
+        # Razón circulante    : f20 / f29  = Total Activo / Total Pasivo
+        # Prueba ácida        : (f13 - f9) / f29 = (Activo Circ - Inv) / Pasivo
+        # Razón endeudamiento : f29 / f20  = Total Pasivo / Total Activo
+        # Días CxC  : AVERAGE(CxC meses) / Ingresos_acum  × días_n
+        # Días CxP  : AVERAGE(Proveedores) / SUM(Compras) × días_n
+        # Rot. inv  : AVERAGE(Inventarios) / Costos_acum   × días_n
+        # Ciclo     : Días CxC - Días CxP + Rot. inv
         capital_trabajo     = act_circ - pasivo
-        razon_circulante    = tot_activo / pasivo            if pasivo     else 0
-        prueba_acida        = (act_circ - inv_val) / pasivo  if pasivo     else 0
-        razon_endeudamiento = pasivo / tot_activo             if tot_activo else 0
+        razon_circulante    = tot_activo / pasivo           if pasivo     else 0
+        prueba_acida        = (act_circ - inv_val) / pasivo if pasivo     else 0
+        razon_endeudamiento = pasivo / tot_activo            if tot_activo else 0
         dias_cxc            = (prom_cxc  / ing_acum * dias_n) if ing_acum  else 0
         dias_cxp            = (prom_prov / sum_comp * dias_n) if sum_comp  else 0
         rotacion_inv        = (prom_inv  / cos_acum * dias_n) if cos_acum  else 0
