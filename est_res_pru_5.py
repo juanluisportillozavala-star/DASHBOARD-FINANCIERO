@@ -310,35 +310,54 @@ def procesar_archivo_bytes(content, filename):
         "Total Capital": capital_contable, "% Total Capital": capital_contable/total_pasivo_capital if total_pasivo_capital else 0,
         "Total Pasivo y Capital": total_pasivo_capital
     }
- 
+
     # ==========================================
     # 4. INDICADORES FINANCIEROS
+    # (Replica Balance (2))
     # ==========================================
-    compras_acum   = obtener_compras_acum(df)
-    dias_acum      = _dias_acumulados(mes_nombre)
- 
-    capital_trabajo     = activo_circulante - pasivo_circulante
-    razon_circulante    = total_activo / pasivo_circulante if pasivo_circulante else 0
-    prueba_acida        = (activo_circulante - inventarios) / pasivo_circulante if pasivo_circulante else 0
-    razon_endeudamiento = pasivo_circulante / total_activo if total_activo else 0
-    dias_cxc            = (cxc / ingresos_acum * dias_acum) if ingresos_acum else 0
-    dias_cxp            = (proveedores / compras_acum * dias_acum) if compras_acum else 0
-    rotacion_inv        = (inventarios / costos_acum * dias_acum) if costos_acum else 0
-    ciclo_efectivo      = dias_cxc - dias_cxp + rotacion_inv
- 
+
+    dias_acum = _dias_acumulados(mes_nombre)
+    compras_acum = obtener_compras_acum(df)
+
+    # ===== Valores del Balance (2) =====
+    activo_circ = activo_circulante
+    activo_total = total_activo
+    pasivo_total = pasivo_circulante
+
+    inventario = inventarios
+    cuentas_cobrar = cxc
+    proveedor = proveedores
+
+    ventas = ingresos_acum
+    costos = costos_acum
+
+    # ===== Indicadores =====
+    capital_trabajo = activo_circ - pasivo_total
+    razon_circulante = activo_circ / pasivo_total if pasivo_total else 0
+    prueba_acida = (activo_circ - inventario) / pasivo_total if pasivo_total else 0
+    razon_endeudamiento = pasivo_total / activo_total if activo_total else 0
+    dias_cxc = (cuentas_cobrar / ventas) * dias_acum if ventas else 0
+    dias_cxp = (proveedor / compras_acum) * dias_acum if compras_acum else 0
+    rotacion_inv = (inventario / costos) * dias_acum if costos else 0
+    ciclo_efectivo = dias_cxc + rotacion_inv - dias_cxp
+
     data_indicadores = {
-        'Mes': mes_nombre, 'Tipo_Reporte': 'Indicadores',
-        'Capital de Trabajo':       capital_trabajo,
-        'Razón Circulante':         razon_circulante,
-        'Prueba Ácida':             prueba_acida,
-        'Razón de Endeudamiento':   razon_endeudamiento,
-        'Días CxC':                 dias_cxc,
-        'Días CxP':                 dias_cxp,
-        'Rotación de Inventario':   rotacion_inv,
-        'Ciclo del Efectivo':       ciclo_efectivo,
+        "Mes": mes_nombre,
+        "Tipo_Reporte": "Indicadores",
+        "Capital de Trabajo": capital_trabajo,
+        "Razón Circulante": razon_circulante,
+        "Prueba Ácida": prueba_acida,
+        "Razón de Endeudamiento": razon_endeudamiento,
+        "Días CxC": dias_cxc,
+        "Días CxP": dias_cxp,
+        "Rotación de Inventario": rotacion_inv,
+        "Ciclo del Efectivo": ciclo_efectivo,
     }
- 
+
     return data_acumulada, data_mensual, data_balance, data_indicadores
+
+
+# ---------------------- APP Dash ----------------------
  
  
 # ---------------------- APP Dash ----------------------
