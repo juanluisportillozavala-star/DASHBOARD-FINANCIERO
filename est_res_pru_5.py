@@ -1339,7 +1339,7 @@ def generar_comp_balance(n_clicks, df_json, mes_a, mes_b):
     )
  
     # Gráfico Balance: solo Total Activo Circulante, Total Pasivo y Total Capital Contable
-    CONCEPTOS_GRAF_BAL = ['Total Activo Fijo', 'Total Pasivo', 'Total Capital']
+    CONCEPTOS_GRAF_BAL = ['Total Activo', 'Total Pasivo', 'Total Capital']
     graf_bal_x, graf_bal_a, graf_bal_b = [], [], []
     for c, va, vb in zip(graf_conceptos, graf_a, graf_b):
         if c in CONCEPTOS_GRAF_BAL:
