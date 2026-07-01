@@ -310,54 +310,27 @@ def procesar_archivo_bytes(content, filename):
         "Total Capital": capital_contable, "% Total Capital": capital_contable/total_pasivo_capital if total_pasivo_capital else 0,
         "Total Pasivo y Capital": total_pasivo_capital
     }
-
+ 
     # ==========================================
-    # 4. INDICADORES FINANCIEROS
-    # (Replica Balance (2))
+    # 4. VALORES CRUDOS PARA INDICADORES
+    # Los indicadores finales se calculan en handle_upload donde
+    # tenemos todos los meses disponibles para promedios acumulados.
     # ==========================================
-
-    dias_acum = _dias_acumulados(mes_nombre)
-    compras_acum = obtener_compras_acum(df)
-
-    # ===== Valores del Balance (2) =====
-    activo_circ = activo_circulante
-    activo_total = total_activo
-    pasivo_total = pasivo_circulante
-
-    inventario = inventarios
-    cuentas_cobrar = cxc
-    proveedor = proveedores
-
-    ventas = ingresos_acum
-    costos = costos_acum
-
-    # ===== Indicadores =====
-    capital_trabajo = activo_circ - pasivo_total
-    razon_circulante = activo_circ / pasivo_total if pasivo_total else 0
-    prueba_acida = (activo_circ - inventario) / pasivo_total if pasivo_total else 0
-    razon_endeudamiento = pasivo_total / activo_total if activo_total else 0
-    dias_cxc = (cuentas_cobrar / ventas) * dias_acum if ventas else 0
-    dias_cxp = (proveedor / compras_acum) * dias_acum if compras_acum else 0
-    rotacion_inv = (inventario / costos) * dias_acum if costos else 0
-    ciclo_efectivo = dias_cxc + rotacion_inv - dias_cxp
-
-    data_indicadores = {
-        "Mes": mes_nombre,
-        "Tipo_Reporte": "Indicadores",
-        "Capital de Trabajo": capital_trabajo,
-        "Razón Circulante": razon_circulante,
-        "Prueba Ácida": prueba_acida,
-        "Razón de Endeudamiento": razon_endeudamiento,
-        "Días CxC": dias_cxc,
-        "Días CxP": dias_cxp,
-        "Rotación de Inventario": rotacion_inv,
-        "Ciclo del Efectivo": ciclo_efectivo,
+    compras_mes = obtener_compras_acum(df)  # compras del mes (col F de 201.01)
+ 
+    data_indicadores_raw = {
+        'Mes': mes_nombre, 'Tipo_Reporte': '_IndRaw',
+        '_cxc':           cxc,
+        '_inventarios':   inventarios,
+        '_activo_circ':   activo_circulante,
+        '_total_activo':  total_activo,
+        '_pasivo':        pasivo_circulante,
+        '_ingresos_acum': ingresos_acum,
+        '_costos_acum':   costos_acum,
+        '_compras_mes':   compras_mes,
     }
-
-    return data_acumulada, data_mensual, data_balance, data_indicadores
-
-
-# ---------------------- APP Dash ----------------------
+ 
+    return data_acumulada, data_mensual, data_balance, data_indicadores_raw
  
  
 # ---------------------- APP Dash ----------------------
@@ -697,20 +670,96 @@ def handle_upload(upload_contents, upload_names):
         except Exception as e:
             return None, html.Div(f"Error procesando {name}: {e}", style={'color': '#EF4444'}), []
  
-    df = pd.DataFrame(resultados)
-    
-    # REORDENAMIENTO MAESTRO: Forzamos a que 'Mes' siempre quede al inicio de todo el DataFrame globalmente
+    df_raw = pd.DataFrame(resultados)
+ 
+    # ── Recalcular indicadores con promedios acumulados ──────────────────────
+    # Extraer filas crudas y ordenar por mes
+    raw = df_raw[df_raw['Tipo_Reporte'] == '_IndRaw'].copy()
+    raw_sorted = raw.sort_values('Mes', key=lambda s: s.map(
+        lambda m: obtener_clave_orden(m)
+    )).reset_index(drop=True)
+ 
+    indicadores_finales = []
+    hist_cxc   = []  # CxC de cada mes acumulado
+    hist_inv   = []  # Inventarios de cada mes acumulado
+    hist_prov  = []  # Proveedores de cada mes acumulado
+    hist_comp  = []  # Compras de cada mes (acumuladas)
+ 
+    for _, row in raw_sorted.iterrows():
+        mes          = row['Mes']
+        cxc_val      = row['_cxc']         if pd.notna(row['_cxc'])        else 0.0
+        inv_val      = row['_inventarios']  if pd.notna(row['_inventarios']) else 0.0
+        act_circ     = row['_activo_circ']  if pd.notna(row['_activo_circ']) else 0.0
+        tot_activo   = row['_total_activo'] if pd.notna(row['_total_activo'])else 0.0
+        pasivo       = row['_pasivo']       if pd.notna(row['_pasivo'])      else 0.0
+        ing_acum     = row['_ingresos_acum']if pd.notna(row['_ingresos_acum'])else 0.0
+        cos_acum     = row['_costos_acum']  if pd.notna(row['_costos_acum']) else 0.0
+        comp_mes     = row['_compras_mes']  if pd.notna(row['_compras_mes']) else 0.0
+ 
+        hist_cxc.append(cxc_val)
+        hist_inv.append(inv_val)
+        hist_prov.append(pasivo)    # usamos saldo de proveedores para CxP
+        hist_comp.append(comp_mes)
+ 
+        n            = len(hist_cxc)          # número de meses acumulados
+        dias_n       = n * 30                 # días del período
+ 
+        prom_cxc     = sum(hist_cxc)  / n
+        prom_inv     = sum(hist_inv)  / n
+        prom_prov    = sum(hist_prov) / n
+        sum_comp     = sum(hist_comp)
+ 
+        # Fórmulas exactas del Excel (Balance (2)):
+        # Capital de trabajo  = Activo Circ - Total Pasivo           (fila 13 - fila 29)
+        # Razón circulante    = Total Activo / Total Pasivo          (fila 20 / fila 29)
+        # Prueba ácida        = (Activo Circ - Inventarios) / Pasivo (fila 13 - 9) / 29
+        # Razón endeudamiento = Total Pasivo / Total Activo          (fila 29 / fila 20)
+        # Días CxC  = PROMEDIO(CxC meses) / Ingresos_acum * días_n
+        # Días CxP  = PROMEDIO(Proveedores) / SUM(Compras) * días_n
+        # Rot. inv  = PROMEDIO(Inventarios) / Costos_acum * días_n
+        # Ciclo     = Días CxC - Días CxP + Rot. inv
+ 
+        capital_trabajo     = act_circ - pasivo
+        razon_circulante    = tot_activo / pasivo            if pasivo     else 0
+        prueba_acida        = (act_circ - inv_val) / pasivo  if pasivo     else 0
+        razon_endeudamiento = pasivo / tot_activo             if tot_activo else 0
+        dias_cxc            = (prom_cxc  / ing_acum * dias_n) if ing_acum  else 0
+        dias_cxp            = (prom_prov / sum_comp * dias_n) if sum_comp  else 0
+        rotacion_inv        = (prom_inv  / cos_acum * dias_n) if cos_acum  else 0
+        ciclo_efectivo      = dias_cxc - dias_cxp + rotacion_inv
+ 
+        indicadores_finales.append({
+            'Mes': mes, 'Tipo_Reporte': 'Indicadores',
+            'Capital de Trabajo':     capital_trabajo,
+            'Razón Circulante':       razon_circulante,
+            'Prueba Ácida':           prueba_acida,
+            'Razón de Endeudamiento': razon_endeudamiento,
+            'Días CxC':               dias_cxc,
+            'Días CxP':               dias_cxp,
+            'Rotación de Inventario': rotacion_inv,
+            'Ciclo del Efectivo':     ciclo_efectivo,
+        })
+ 
+    # Reemplazar filas _IndRaw con los indicadores calculados correctamente
+    df_sin_raw = df_raw[df_raw['Tipo_Reporte'] != '_IndRaw']
+    df_ind     = pd.DataFrame(indicadores_finales)
+    df         = pd.concat([df_sin_raw, df_ind], ignore_index=True)
+ 
+    # REORDENAMIENTO MAESTRO
     cols = df.columns.tolist()
     if 'Mes' in cols:
         cols.insert(0, cols.pop(cols.index('Mes')))
     if 'Tipo_Reporte' in cols:
-        cols.insert(0, cols.pop(cols.index('Tipo_Reporte'))) 
+        cols.insert(0, cols.pop(cols.index('Tipo_Reporte')))
     df = df[cols]
-    
+ 
     meses_unicos = sorted(df['Mes'].unique(), key=obtener_clave_orden)
-    mes_options = [{'label': m, 'value': m} for m in meses_unicos]
-    
-    status_msg = html.Div(f'✓ {len(valid_files)} archivos procesados con éxito. Balance calculado con reglas actualizadas.', style={'color': '#10B981', 'padding': '10px 0'})
+    mes_options  = [{'label': m, 'value': m} for m in meses_unicos]
+ 
+    status_msg = html.Div(
+        f'✓ {len(valid_files)} archivos procesados con éxito. Balance calculado con reglas actualizadas.',
+        style={'color': '#10B981', 'padding': '10px 0'}
+    )
     return df.to_json(date_format='iso', orient='split'), status_msg, mes_options
  
  
@@ -1281,7 +1330,7 @@ def generar_comp_balance(n_clicks, df_json, mes_a, mes_b):
     )
  
     # Gráfico Balance: solo Total Activo Circulante, Total Pasivo y Total Capital Contable
-    CONCEPTOS_GRAF_BAL = ['Total Activo Circulante', 'Total Pasivo', 'Total Capital']
+    CONCEPTOS_GRAF_BAL = ['Total Activo Fijo', 'Total Pasivo', 'Total Capital']
     graf_bal_x, graf_bal_a, graf_bal_b = [], [], []
     for c, va, vb in zip(graf_conceptos, graf_a, graf_b):
         if c in CONCEPTOS_GRAF_BAL:
