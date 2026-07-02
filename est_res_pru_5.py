@@ -686,61 +686,88 @@ def handle_upload(upload_contents, upload_names):
     )).reset_index(drop=True)
  
     indicadores_finales = []
-    hist_cxc  = []   # saldo CxC de cada mes (para PROMEDIO)
-    hist_inv  = []   # saldo Inventarios de cada mes (para PROMEDIO)
-    hist_prov = []   # saldo Proveedores de cada mes (para PROMEDIO)
-    hist_comp = []   # compras de cada mes (para SUMA acumulada)
+    hist_cxc  = []
+    hist_inv  = []
+    hist_prov = []
+    hist_comp = []
  
-    # Días por mes — tabla fija según el Excel
     DIAS_POR_MES = {
         'ENERO': 30, 'FEBRERO': 60, 'MARZO': 90, 'ABRIL': 120,
         'MAYO': 150, 'JUNIO': 180, 'JULIO': 210, 'AGOSTO': 240,
         'SEPTIEMBRE': 270, 'OCTUBRE': 300, 'NOVIEMBRE': 330, 'DICIEMBRE': 360
     }
  
+    # PASADA 1: recorrer solo los meses 2026 para construir el historial completo
+    # Así cuando procesemos 2025 ya tenemos el último valor de proveedores 2026
+    rows_2025 = []
+    rows_2026 = []
+    for _, row in raw_sorted.iterrows():
+        mes_upper = str(row['Mes']).upper().split()[0]
+        if mes_upper.isdigit():
+            rows_2025.append(row)
+        else:
+            rows_2026.append(row)
+ 
+    # Pre-construir historial 2026 para obtener el último saldo de proveedores
+    prov_hist_2026 = []
+    for row in rows_2026:
+        pasivo_r = float(row['_pasivo']) if pd.notna(row['_pasivo']) else 0.0
+        prov_hist_2026.append(pasivo_r)
+    ultimo_prov_2026 = prov_hist_2026[-1] if prov_hist_2026 else None
+ 
+    # PASADA 2: calcular indicadores en orden correcto (2025 primero, luego 2026)
     for _, row in raw_sorted.iterrows():
         mes        = row['Mes']
-        cxc_val    = float(row['_cxc'])          if pd.notna(row['_cxc'])         else 0.0
-        inv_val    = float(row['_inventarios'])   if pd.notna(row['_inventarios']) else 0.0
-        act_circ   = float(row['_activo_circ'])   if pd.notna(row['_activo_circ']) else 0.0
-        tot_activo = float(row['_total_activo'])  if pd.notna(row['_total_activo'])else 0.0
-        pasivo     = float(row['_pasivo'])        if pd.notna(row['_pasivo'])      else 0.0
-        ing_acum   = float(row['_ingresos_acum']) if pd.notna(row['_ingresos_acum'])else 0.0
-        cos_acum   = float(row['_costos_acum'])   if pd.notna(row['_costos_acum']) else 0.0
-        comp_mes   = float(row['_compras_mes'])   if pd.notna(row['_compras_mes']) else 0.0
+        cxc_val    = float(row['_cxc'])           if pd.notna(row['_cxc'])          else 0.0
+        inv_val    = float(row['_inventarios'])    if pd.notna(row['_inventarios'])  else 0.0
+        act_circ   = float(row['_activo_circ'])    if pd.notna(row['_activo_circ'])  else 0.0
+        tot_activo = float(row['_total_activo'])   if pd.notna(row['_total_activo']) else 0.0
+        pasivo     = float(row['_pasivo'])         if pd.notna(row['_pasivo'])       else 0.0
+        ing_acum   = float(row['_ingresos_acum'])  if pd.notna(row['_ingresos_acum'])else 0.0
+        cos_acum   = float(row['_costos_acum'])    if pd.notna(row['_costos_acum'])  else 0.0
+        comp_mes   = float(row['_compras_mes'])    if pd.notna(row['_compras_mes'])  else 0.0
  
-        # Acumular histórico
-        hist_cxc.append(cxc_val)
-        hist_inv.append(inv_val)
-        hist_prov.append(pasivo)
-        hist_comp.append(comp_mes)
+        # Detectar si es año completo (2025) o mes individual 2026
+        mes_upper  = str(mes).upper().split()[0]
+        es_anio    = mes_upper.isdigit()  # "2025" -> True, "ENERO" -> False
+        dias_n     = 360 if es_anio else DIAS_POR_MES.get(mes_upper, 30)
  
-        # Días del período según el mes (tabla fija del Excel)
-        mes_upper = str(mes).upper().split()[0]  # ej: "ENERO" de "Enero 2026"
-        dias_n    = DIAS_POR_MES.get(mes_upper, len(hist_cxc) * 30)
+        if es_anio:
+            # 2025: dato directo sin promedio
+            # Días CxP = proveedores 2025 / compras anuales 2025 × 360
+            prom_cxc  = cxc_val
+            prom_inv  = inv_val
+            prom_prov = pasivo     # saldo proveedores 2025
+            sum_comp  = comp_mes   # compras anuales 2025 (col F de Bal 2025)
+        else:
+            # Meses 2026: acumular historial y calcular promedios
+            hist_cxc.append(cxc_val)
+            hist_inv.append(inv_val)
+            hist_prov.append(pasivo)
+            hist_comp.append(comp_mes)
+            n         = len(hist_cxc)
+            prom_cxc  = sum(hist_cxc)  / n
+            prom_inv  = sum(hist_inv)  / n
+            prom_prov = sum(hist_prov) / n
+            sum_comp  = sum(hist_comp)
  
-        n         = len(hist_cxc)
-        prom_cxc  = sum(hist_cxc)  / n   # AVERAGE(CxC de ene..mes actual)
-        prom_inv  = sum(hist_inv)  / n   # AVERAGE(Inventarios de ene..mes actual)
-        prom_prov = sum(hist_prov) / n   # AVERAGE(Proveedores de ene..mes actual)
-        sum_comp  = sum(hist_comp)        # SUM(Compras de ene..mes actual)
- 
-        # Fórmulas exactas del Excel (todas referenciadas a Balance (2)):
-        # Capital de trabajo  : f13 - f29  = Activo Circ - Total Pasivo
-        # Razón circulante    : f20 / f29  = Total Activo / Total Pasivo
-        # Prueba ácida        : (f13 - f9) / f29 = (Activo Circ - Inv) / Pasivo
-        # Razón endeudamiento : f29 / f20  = Total Pasivo / Total Activo
-        # Días CxC  : AVERAGE(CxC meses) / Ingresos_acum  × días_n
-        # Días CxP  : AVERAGE(Proveedores) / SUM(Compras) × días_n
-        # Rot. inv  : AVERAGE(Inventarios) / Costos_acum   × días_n
+        # Fórmulas exactas del Excel (Balance (2)):
+        # Capital de trabajo  : Activo Circ - Total Pasivo
+        # Razón circulante    : Total Activo / Total Pasivo
+        # Prueba ácida        : (Activo Circ - Inventarios) / Total Pasivo
+        # Razón endeudamiento : Total Pasivo / Total Activo
+        # Días CxC  : PROMEDIO(CxC 2026) / Ingresos_acum × días
+        # Días CxP  : último_prov_2026 / compras_anuales_2025 × 360  (para 2025)
+        #           : PROMEDIO(Prov 2026) / SUMA(Compras 2026) × días  (para meses 2026)
+        # Rot. inv  : PROMEDIO(Inv 2026) / Costos_acum × días
         # Ciclo     : Días CxC - Días CxP + Rot. inv
         capital_trabajo     = act_circ - pasivo
-        razon_circulante    = tot_activo / pasivo           if pasivo     else 0
-        prueba_acida        = (act_circ - inv_val) / pasivo if pasivo     else 0
-        razon_endeudamiento = pasivo / tot_activo            if tot_activo else 0
-        dias_cxc            = (prom_cxc  / ing_acum * dias_n) if ing_acum  else 0
-        dias_cxp            = (prom_prov / sum_comp * dias_n) if sum_comp  else 0
-        rotacion_inv        = (prom_inv  / cos_acum * dias_n) if cos_acum  else 0
+        razon_circulante    = tot_activo / pasivo            if pasivo     else 0
+        prueba_acida        = (act_circ - inv_val) / pasivo  if pasivo     else 0
+        razon_endeudamiento = pasivo / tot_activo             if tot_activo else 0
+        dias_cxc            = (prom_cxc  / ing_acum * dias_n) if ing_acum   else 0
+        dias_cxp            = (prom_prov / sum_comp * dias_n) if sum_comp   else 0
+        rotacion_inv        = (prom_inv  / cos_acum * dias_n) if cos_acum   else 0
         ciclo_efectivo      = dias_cxc - dias_cxp + rotacion_inv
  
         indicadores_finales.append({
