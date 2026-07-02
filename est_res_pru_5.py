@@ -140,13 +140,19 @@ def calcular_otras_cuentas_cobrar(df, grupos):
     return total
  
 def obtener_compras_acum(df):
-    # Compras = movimiento Credito (indice 5) del totalizador 201.01
+    # Compras = movimiento Credito (indice 5) de la cuenta/totalizador 201.01
+    # Se busca en col[0] (código) Y en col[1] (nombre) para cubrir ambos formatos
+    total = 0.0
     for i in range(len(df)):
+        codigo = str(df.iat[i, 0]).strip()
         nombre = str(df.iat[i, 1]).strip()
-        if nombre.startswith('201.01'):
-            v = df.iat[i, 5]
-            return float(v) if pd.notna(v) and isinstance(v, (int, float)) else 0.0
-    return 0.0
+        # Coincide si el código ES exactamente '201.01' o empieza con '201.01.'
+        # o si el nombre empieza con '201.01' (totalizador de grupo)
+        if (codigo == '201.01' or codigo.startswith('201.01.') or nombre.startswith('201.01')):
+            v = df.iat[i, 5]  # col F = movimiento crédito del período
+            if pd.notna(v) and isinstance(v, (int, float)):
+                total += float(v)
+    return total
  
  
 def calcular_resultados_acumulados(df, grupos):
